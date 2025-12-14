@@ -5,16 +5,25 @@ import { describe, expect, it } from 'vitest'
 import handler from './index'
 
 describe('worker fetch handler', () => {
-  it('returns JSON under /api/', async () => {
-    const res = await handler.fetch!(new Request('https://example.com/api/'))
+  it('returns JSON response for API paths', async () => {
+    const apiPaths = ['/api/', '/api/anything']
 
-    expect(res.status).toBe(200)
-    await expect(res.json()).resolves.toEqual({ name: 'Cloudflare' })
+    for (const path of apiPaths) {
+      const res = await handler.fetch!(new Request(`https://example.com${path}`))
+
+      expect(res.status).toBe(200)
+      expect(res.headers.get('content-type')).toMatch(/application\/json/i)
+      await expect(res.json()).resolves.toEqual({ name: 'Cloudflare' })
+    }
   })
 
   it('returns 404 for non-API paths', async () => {
-    const res = await handler.fetch!(new Request('https://example.com/'))
+    const nonApiPaths = ['/', '/not-api', '/api']
 
-    expect(res.status).toBe(404)
+    for (const path of nonApiPaths) {
+      const res = await handler.fetch!(new Request(`https://example.com${path}`))
+
+      expect(res.status).toBe(404)
+    }
   })
 })
