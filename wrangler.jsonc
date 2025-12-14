@@ -14,13 +14,14 @@
 		"enabled": true
 	},
 	"vars": {
-		"FIREBASE_PROJECT_ID": "",
+		"FIREBASE_PROJECT_ID": "brainiac-c9e97",
 		"AI_TAGGER_MODEL": "@cf/openai/gpt-oss-20b"
 	},
 	"d1_databases": [
 		{
 			"binding": "DB",
 			"database_name": "brainiac",
+			"database_id": "d33ba5aa-671e-47ea-8299-e71cfc1e6214",
 			"migrations_dir": "./migrations"
 		}
 	],
