@@ -22,7 +22,10 @@ This file provides guidance to WARP (warp.dev) when working with code in this re
 - Regenerate Cloudflare Worker runtime/env types (updates `worker-configuration.d.ts`): `npm run cf-typegen`
 
 ### Tests
-- No test runner is currently configured (there is no `test` script in `package.json`).
+- Run tests (watch mode): `npm test` (alias for `npm run test:watch`)
+- Run tests once (CI-friendly): `npm run test:run`
+
+Tests are configured via `vitest.config.ts`. React component tests default to `jsdom`; Worker tests can opt into Node via a `// @vitest-environment node` file header.
 
 ## Architecture (big picture)
 
