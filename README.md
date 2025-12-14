@@ -1,69 +1,100 @@
-# React + TypeScript + Vite
+# brainiac
+A tiny thought-capture app.
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+- Frontend: React SPA (Vite) in `src/`
+- Backend: Cloudflare Worker in `worker/`
+- Storage: Cloudflare D1 (SQLite)
+- Async analysis: Cloudflare Queues
+- Auth: Google sign-in via Firebase Auth
+- AI tagging: Cloudflare AI (default model `@cf/openai/gpt-oss-20b`)
 
-Currently, two official plugins are available:
+## Features (current)
+- Sign in with Google.
+- Create thoughts.
+- Browse thoughts newest-first.
+- Browse tags with counts.
+- Filter thoughts by AND’ing tags.
+- Edit / soft-delete thoughts.
+- On create/edit, a tagging job is enqueued; the tagger considers existing tags and current tags.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default tseslint.config([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      ...tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      ...tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      ...tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+## Local development
+### 1) Install
+```bash
+npm install
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+### 2) Firebase setup (one project for dev + prod)
+1. Create a Firebase project.
+2. Enable **Authentication → Sign-in method → Google**.
+3. Add your local dev origin (e.g. `http://localhost:5173`) to **Authorized domains**.
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default tseslint.config([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+Create a `.env.local` file for Vite:
+```bash
+VITE_FIREBASE_API_KEY=...
+VITE_FIREBASE_AUTH_DOMAIN=...
+VITE_FIREBASE_PROJECT_ID=...
+VITE_FIREBASE_APP_ID=...
 ```
+
+### 3) Worker env vars
+The Worker needs the Firebase project id to verify ID tokens.
+
+For local dev, create a `.dev.vars` file:
+```bash
+FIREBASE_PROJECT_ID=your-firebase-project-id
+AI_TAGGER_MODEL=@cf/openai/gpt-oss-20b
+```
+
+For deployed environments, set `FIREBASE_PROJECT_ID` via `wrangler.jsonc` vars or Wrangler secrets/vars.
+
+### 4) D1 database + migrations
+This repo stores schema migrations in `migrations/`.
+
+Create the database (once):
+```bash
+wrangler d1 create brainiac
+```
+
+Apply migrations locally:
+```bash
+wrangler d1 migrations apply brainiac --local
+```
+
+Apply migrations to production:
+```bash
+wrangler d1 migrations apply brainiac
+```
+
+Note: you may need to add the created D1 database id/name to `wrangler.jsonc` depending on your Wrangler workflow.
+
+### 5) Queues
+Create the queues:
+```bash
+wrangler queues create brainiac-analysis
+wrangler queues create brainiac-analysis-dlq
+```
+
+### 6) Run dev server
+```bash
+npm run dev
+```
+
+## Deploy
+```bash
+npm run deploy
+```
+
+## Architecture notes
+### Why a single Worker (for now)
+We run both HTTP API (`fetch`) and queue consumption (`queue`) in one Worker to keep iteration fast and deployment simple.
+
+We may split into separate Workers later if we need:
+- independent deploy cadence for API vs workers
+- different scaling/performance tuning
+- stronger isolation between queue retries/failures and the HTTP path
+- different auth/permissions boundaries
+
+## Useful commands
+- Tests: `npm run test:run`
+- Lint: `npm run lint`
+- Regenerate Worker env/runtime types: `npm run cf-typegen`

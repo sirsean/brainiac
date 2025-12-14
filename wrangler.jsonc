@@ -12,6 +12,37 @@
 	},
 	"observability": {
 		"enabled": true
+	},
+	"vars": {
+		"FIREBASE_PROJECT_ID": "",
+		"AI_TAGGER_MODEL": "@cf/openai/gpt-oss-20b"
+	},
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "brainiac",
+			"migrations_dir": "./migrations"
+		}
+	],
+	"queues": {
+		"producers": [
+			{
+				"queue": "brainiac-analysis",
+				"binding": "ANALYSIS_QUEUE"
+			}
+		],
+		"consumers": [
+			{
+				"queue": "brainiac-analysis",
+				"max_batch_size": 10,
+				"max_batch_timeout": 30,
+				"max_retries": 10,
+				"dead_letter_queue": "brainiac-analysis-dlq"
+			}
+		]
+	},
+	"ai": {
+		"binding": "AI"
 	}
 	/**
 	 * Smart Placement

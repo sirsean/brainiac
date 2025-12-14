@@ -1,26 +1,30 @@
 import { render, screen } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+
+vi.mock('./useAuth', () => {
+  return {
+    useAuth: () => ({
+      loading: false,
+      user: null,
+      signIn: vi.fn(async () => undefined),
+      signOut: vi.fn(async () => undefined),
+      getIdToken: vi.fn(async () => null),
+    }),
+  }
+})
 
 import App from './App'
 
 describe('App', () => {
-  it('renders the correct title', () => {
+  it('renders brainiac header', () => {
     render(<App />)
 
-    expect(
-      screen.getByRole('heading', {
-        level: 1,
-        name: 'Vite + React + Cloudflare',
-      }),
-    ).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 1, name: 'brainiac' })).toBeInTheDocument()
   })
 
-  it('renders the increment button with initial count', () => {
+  it('renders sign-in button when signed out', () => {
     render(<App />)
 
-    const incrementButton = screen.getByRole('button', { name: 'increment' })
-
-    expect(incrementButton).toBeInTheDocument()
-    expect(incrementButton).toHaveTextContent('count is 0')
+    expect(screen.getByRole('button', { name: 'sign in' })).toBeInTheDocument()
   })
 })
