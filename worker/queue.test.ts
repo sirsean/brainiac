@@ -1,6 +1,6 @@
 // @vitest-environment node
 
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const dbMocks = vi.hoisted(() => {
   return {
@@ -40,14 +40,35 @@ vi.mock('./auth', () => authMocks)
 import handler from './index'
 
 function makeEnv(aiOutputText: string): Env {
+  const fetchMock = vi.fn(async () => {
+    return new Response(
+      JSON.stringify({
+        object: 'response',
+        output: [
+          {
+            type: 'message',
+            role: 'assistant',
+            content: [{ type: 'output_text', text: aiOutputText }],
+          },
+        ],
+      }),
+      {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      },
+    )
+  })
+
+  vi.stubGlobal('fetch', fetchMock)
+
   return {
     FIREBASE_PROJECT_ID: 'proj',
     AI_TAGGER_MODEL: '@cf/openai/gpt-oss-20b',
+    CLOUDFLARE_ACCOUNT_ID: 'acct',
+    CLOUDFLARE_API_TOKEN: 'tok',
     DB: {} as unknown as D1Database,
     ANALYSIS_QUEUE: { send: async () => undefined } as unknown as Queue,
-    AI: {
-      run: vi.fn(async () => ({ output_text: aiOutputText })),
-    } as unknown as Ai,
+    AI: {} as unknown as Ai,
   }
 }
 
@@ -61,6 +82,11 @@ function makeMessage(body: unknown) {
 
 beforeEach(() => {
   vi.resetAllMocks()
+  vi.spyOn(console, 'error').mockImplementation(() => undefined)
+})
+
+afterEach(() => {
+  vi.restoreAllMocks()
 })
 
 describe('Worker queue consumer', () => {
@@ -68,7 +94,7 @@ describe('Worker queue consumer', () => {
     const env = makeEnv('{"tags":[]}')
     const msg = makeMessage({ nope: true })
 
-    await handler.queue!({ messages: [msg] } as unknown as MessageBatch<unknown>, env, {
+    await handler.queue!({ messages: [msg] } as unknown as MessageBatch<{ jobId: number }>, env, {
       waitUntil: () => undefined,
     } as unknown as ExecutionContext)
 
@@ -99,7 +125,7 @@ describe('Worker queue consumer', () => {
 
     const msg = makeMessage({ jobId: 1 })
 
-    await handler.queue!({ messages: [msg] } as unknown as MessageBatch<unknown>, env, {
+    await handler.queue!({ messages: [msg] } as unknown as MessageBatch<{ jobId: number }>, env, {
       waitUntil: () => undefined,
     } as unknown as ExecutionContext)
 
@@ -134,7 +160,7 @@ describe('Worker queue consumer', () => {
 
     const msg = makeMessage({ jobId: 1 })
 
-    await handler.queue!({ messages: [msg] } as unknown as MessageBatch<unknown>, env, {
+    await handler.queue!({ messages: [msg] } as unknown as MessageBatch<{ jobId: number }>, env, {
       waitUntil: () => undefined,
     } as unknown as ExecutionContext)
 
@@ -180,7 +206,7 @@ describe('Worker queue consumer', () => {
 
     const msg = makeMessage({ jobId: 1 })
 
-    await handler.queue!({ messages: [msg] } as unknown as MessageBatch<unknown>, env, {
+    await handler.queue!({ messages: [msg] } as unknown as MessageBatch<{ jobId: number }>, env, {
       waitUntil: () => undefined,
     } as unknown as ExecutionContext)
 

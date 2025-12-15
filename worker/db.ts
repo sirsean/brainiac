@@ -29,6 +29,8 @@ export type AnalysisJobRow = {
   created_at: number
   updated_at: number
   error: string | null
+  error_stack: string | null
+  error_details_json: string | null
   result_json: string | null
 }
 
@@ -274,7 +276,8 @@ export async function createAnalysisJob(env: Env, opts: {
 
 export async function getAnalysisJobById(env: Env, id: number): Promise<AnalysisJobRow> {
   const { results } = await env.DB.prepare(
-    `SELECT id, thought_id, uid, step, status, attempts, created_at, updated_at, error, result_json
+    `SELECT id, thought_id, uid, step, status, attempts, created_at, updated_at,
+            error, error_stack, error_details_json, result_json
      FROM analysis_jobs
      WHERE id = ?`
   )
@@ -306,14 +309,27 @@ export async function markJobDone(env: Env, id: number, resultJson: string): Pro
     .run()
 }
 
-export async function markJobError(env: Env, id: number, error: string, attemptsDelta = 1): Promise<void> {
+export async function markJobError(
+  env: Env,
+  id: number,
+  error: {
+    message: string
+    stack?: string | null
+    detailsJson?: string | null
+  },
+  attemptsDelta = 1,
+): Promise<void> {
   await env.DB.prepare(
     `UPDATE analysis_jobs
-     SET status = 'error', updated_at = unixepoch(), error = ?, attempts = attempts + ?,
+     SET status = 'error', updated_at = unixepoch(),
+         error = ?,
+         error_stack = ?,
+         error_details_json = ?,
+         attempts = attempts + ?,
          result_json = COALESCE(result_json, '')
      WHERE id = ?`
   )
-    .bind(error, attemptsDelta, id)
+    .bind(error.message, error.stack ?? null, error.detailsJson ?? null, attemptsDelta, id)
     .run()
 }
 

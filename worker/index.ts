@@ -19,6 +19,7 @@ import {
   getThoughtTags,
   setThoughtTagsAiOnly,
 } from './db'
+import { CloudflareAiApiClient, extractAiOutputText } from './cloudflareAiApiClient'
 import {
   buildTaggerSystemPrompt,
   buildTaggerUserPrompt,
@@ -217,6 +218,23 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
   return err(404, 'Not found')
 }
 
+async function runTaggerAi(env: Env, model: string, input: unknown): Promise<unknown> {
+  if (!env.CLOUDFLARE_ACCOUNT_ID) {
+    throw new Error('CLOUDFLARE_ACCOUNT_ID is not configured')
+  }
+  if (!env.CLOUDFLARE_API_TOKEN) {
+    throw new Error('CLOUDFLARE_API_TOKEN is not configured')
+  }
+
+  const client = new CloudflareAiApiClient({
+    accountId: env.CLOUDFLARE_ACCOUNT_ID,
+    apiToken: env.CLOUDFLARE_API_TOKEN,
+    baseUrl: env.CLOUDFLARE_AI_BASE_URL,
+  })
+
+  return await client.run(model, input)
+}
+
 async function processTaggingJob(env: Env, jobId: number): Promise<void> {
   const job = await getAnalysisJobById(env, jobId)
   if (job.step !== 'tagging') return
@@ -237,34 +255,16 @@ async function processTaggingJob(env: Env, jobId: number): Promise<void> {
   const system = buildTaggerSystemPrompt()
   const user = buildTaggerUserPrompt({ thought: thought.body, existingTags, currentTags })
 
-  const model = (env.AI_TAGGER_MODEL || '@cf/openai/gpt-oss-20b') as keyof AiModels
+  const model = env.AI_TAGGER_MODEL || '@cf/openai/gpt-oss-20b'
 
-  const aiOut = await env.AI.run(
-    model,
-    {
-      input: [
-        {
-          role: 'system',
-          content: [{ type: 'input_text', text: system }],
-          type: 'message',
-        },
-        {
-          role: 'user',
-          content: [{ type: 'input_text', text: user }],
-          type: 'message',
-        },
-      ],
-      text: { format: { type: 'json_object' } },
-      max_output_tokens: 300,
-      temperature: 0.2,
-    },
-    { tags: ['brainiac:tagging'] },
-  )
-
-  const outputText = aiOut.output_text
-  if (typeof outputText !== 'string') {
-    throw new Error('AI did not return output_text')
+  // Minimal Responses-style payload. We'll add format/options back once we confirm this works.
+  const aiInput = {
+    instructions: system,
+    input: user,
   }
+
+  const aiOut = await runTaggerAi(env, model, aiInput)
+  const outputText = extractAiOutputText(aiOut)
 
   let parsed: TaggingAiResult
   try {
@@ -311,13 +311,38 @@ export default {
         await processTaggingJob(env, body.jobId)
         message.ack()
       } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e)
+        const err = e instanceof Error ? e : new Error(String(e))
+        const details = (err as any).details as unknown
+
+        const errorDetails = {
+          name: err.name,
+          message: err.message,
+          stack: err.stack,
+          details: details ?? null,
+        }
+
+        // Ensure failures show up in `npm run dev` logs.
+        console.error('[analysis_jobs] job failed', {
+          jobId: body.jobId,
+          ...errorDetails,
+        })
+
         // Persist error info; let the queue retry.
         try {
-          await markJobError(env, body.jobId, msg, 0)
+          await markJobError(
+            env,
+            body.jobId,
+            {
+              message: err.message,
+              stack: err.stack,
+              detailsJson: JSON.stringify(errorDetails),
+            },
+            0,
+          )
         } catch {
           // ignore
         }
+
         message.retry({ delaySeconds: 30 })
       }
     }

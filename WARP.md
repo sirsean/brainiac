@@ -10,9 +10,10 @@ This file provides guidance to WARP (warp.dev) when working with code in this re
   - (lockfile-clean install) `npm ci`
 
 ### Local development
-- Start the dev server (Vite + Cloudflare integration): `npm run dev`
+- Primary local workflow: `npm run dev` (Vite + Cloudflare integration). Avoid suggesting `wrangler dev` unless explicitly requested.
 - Production build (TypeScript project build + Vite bundling): `npm run build`
 - Preview the production build locally: `npm run preview`
+- Note: Workers AI bindings access remote resources even in local dev and may incur usage charges. You may see a Wrangler warning about this; it can be suppressed by setting `remote: true` on the AI binding in `wrangler.jsonc`.
 
 ### Lint
 - Run ESLint (flat config): `npm run lint`

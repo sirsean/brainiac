@@ -7,9 +7,11 @@ import handler from './index'
 const env = {
   FIREBASE_PROJECT_ID: 'test',
   AI_TAGGER_MODEL: '@cf/openai/gpt-oss-20b',
+  CLOUDFLARE_ACCOUNT_ID: 'acct',
+  CLOUDFLARE_API_TOKEN: 'tok',
   DB: {} as unknown as D1Database,
   ANALYSIS_QUEUE: { send: async () => undefined } as unknown as Queue,
-  AI: { run: async () => ({ output_text: '{"tags":[]}' }) } as unknown as Ai,
+  AI: {} as unknown as Ai,
 } as unknown as Env
 
 describe('worker fetch handler', () => {
