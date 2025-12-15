@@ -47,7 +47,7 @@ type ThoughtAnalysisSummary = {
   last_updated_at: number
 }
 
-function summarizeJobs(row: AnalysisJobStatusSummaryRow | undefined): ThoughtAnalysisSummary | null {
+export function summarizeJobs(row: AnalysisJobStatusSummaryRow | undefined): ThoughtAnalysisSummary | null {
   if (!row || row.total <= 0) return null
 
   let status: ThoughtAnalysisSummary['status'] = 'done'
@@ -96,7 +96,7 @@ function parseTagsParam(tags: string | null): string[] {
     .filter((t) => t.length > 0)
 }
 
-function parseIdsParam(ids: string | null): number[] {
+export function parseIdsParam(ids: string | null): number[] {
   if (!ids) return []
   const out: number[] = []
   for (const part of ids.split(',')) {

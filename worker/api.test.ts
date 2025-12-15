@@ -287,4 +287,91 @@ describe('Worker API', () => {
       tags: [{ id: 10, name: 'Foo', thought_count: 3 }],
     })
   })
+
+  it('GET /api/thoughts/analysis-status returns summaries for the requested ids', async () => {
+    const env = makeEnv()
+
+    dbMocks.getAnalysisJobStatusSummariesForThoughtIds.mockResolvedValue(
+      new Map([
+        [
+          1,
+          {
+            thought_id: 1,
+            total: 3,
+            queued: 1,
+            processing: 0,
+            done: 2,
+            error: 0,
+            last_updated_at: 10,
+          },
+        ],
+        [
+          2,
+          {
+            thought_id: 2,
+            total: 2,
+            queued: 0,
+            processing: 1,
+            done: 1,
+            error: 0,
+            last_updated_at: 20,
+          },
+        ],
+        [
+          3,
+          {
+            thought_id: 3,
+            total: 1,
+            queued: 0,
+            processing: 0,
+            done: 0,
+            error: 1,
+            last_updated_at: 30,
+          },
+        ],
+      ]),
+    )
+
+    const res = await handler.fetch!(
+      new Request('https://example.com/api/thoughts/analysis-status?ids=1,2,3,99'),
+      env,
+    )
+    expect(res.status).toBe(200)
+
+    const json: unknown = await res.json()
+    expect(json).toMatchObject({
+      summaries: {
+        '1': {
+          status: 'queued',
+          total: 3,
+          queued: 1,
+          processing: 0,
+          done: 2,
+          error: 0,
+          last_updated_at: 10,
+        },
+        '2': {
+          status: 'processing',
+          total: 2,
+          queued: 0,
+          processing: 1,
+          done: 1,
+          error: 0,
+          last_updated_at: 20,
+        },
+        '3': {
+          status: 'error',
+          total: 1,
+          queued: 0,
+          processing: 0,
+          done: 0,
+          error: 1,
+          last_updated_at: 30,
+        },
+        '99': null,
+      },
+    })
+
+    expect(dbMocks.getAnalysisJobStatusSummariesForThoughtIds).toHaveBeenCalledWith(env, 'u1', [1, 2, 3, 99])
+  })
 })

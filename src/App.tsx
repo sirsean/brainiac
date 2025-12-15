@@ -423,7 +423,7 @@ function App() {
   )
 }
 
-function analysisLabel(a: ThoughtAnalysisSummary | null): { text: string; title: string; className: string } | null {
+export function analysisLabel(a: ThoughtAnalysisSummary | null): { text: string; title: string; className: string } | null {
   if (!a) return null
 
   const progress = `${a.done}/${a.total}`
