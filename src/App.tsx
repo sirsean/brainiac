@@ -53,9 +53,32 @@ function App() {
   }
 
   async function refreshThoughts(reset = true) {
-    const base = selectedTags.length > 0 ? `/api/thoughts/by-tags?tags=${encodeURIComponent(tagQuery)}` : '/api/thoughts'
-    const path = reset || !thoughtsCursor ? `${base}?limit=50` : `${base}?limit=50&cursor=${encodeURIComponent(thoughtsCursor)}`
+    const params = new URLSearchParams()
+    params.set('limit', '50')
 
+    if (!reset && thoughtsCursor) {
+      params.set('cursor', thoughtsCursor)
+    }
+
+    if (selectedTags.length > 0) {
+      params.set('tags', tagQuery)
+      const path = `/api/thoughts/by-tags?${params.toString()}`
+      const data = await apiFetch<{ thoughts: Thought[]; next_cursor: string | null }>({
+        path,
+        getIdToken,
+      })
+
+      if (reset) {
+        setThoughts(data.thoughts)
+      } else {
+        setThoughts((prev) => [...prev, ...data.thoughts])
+      }
+
+      setThoughtsCursor(data.next_cursor)
+      return
+    }
+
+    const path = `/api/thoughts?${params.toString()}`
     const data = await apiFetch<{ thoughts: Thought[]; next_cursor: string | null }>({
       path,
       getIdToken,
