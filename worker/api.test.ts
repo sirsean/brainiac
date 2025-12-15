@@ -33,6 +33,7 @@ const dbMocks = vi.hoisted(() => {
       (env: Env, opts: { uid: string; limit: number; cursor?: { createdAt: number; id: number } }) => Promise<unknown[]>
     >(),
     getTagsForThoughtIds: vi.fn<(env: Env, thoughtIds: number[]) => Promise<Map<number, string[]>>>(),
+    getAnalysisJobStatusSummariesForThoughtIds: vi.fn<(env: Env, uid: string, thoughtIds: number[]) => Promise<Map<number, unknown>>>(),
     getThoughtTags: vi.fn<(env: Env, thoughtId: number) => Promise<string[]>>(),
 
     listUserTagsWithStats: vi.fn<
@@ -128,6 +129,7 @@ describe('Worker API', () => {
       uid: 'u1',
       step: 'tagging',
       status: 'queued',
+      updated_at: 100,
     })
 
     const res = await handler.fetch!(
@@ -174,6 +176,7 @@ describe('Worker API', () => {
       uid: 'u1',
       step: 'tagging',
       status: 'queued',
+      updated_at: 101,
     })
 
     dbMocks.getThoughtTags.mockResolvedValue(['Foo'])
@@ -236,6 +239,7 @@ describe('Worker API', () => {
     ])
 
     dbMocks.getTagsForThoughtIds.mockResolvedValue(new Map([[1, ['Foo']], [2, []]]))
+    dbMocks.getAnalysisJobStatusSummariesForThoughtIds.mockResolvedValue(new Map())
 
     const res = await handler.fetch!(new Request('https://example.com/api/thoughts?limit=50'), env)
     expect(res.status).toBe(200)

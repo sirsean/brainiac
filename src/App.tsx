@@ -1,8 +1,18 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
 
 import { apiFetch } from './api'
 import { useAuth } from './useAuth'
+
+type ThoughtAnalysisSummary = {
+  status: 'queued' | 'processing' | 'done' | 'error'
+  total: number
+  queued: number
+  processing: number
+  done: number
+  error: number
+  last_updated_at: number
+}
 
 type Thought = {
   id: number
@@ -14,6 +24,7 @@ type Thought = {
   status: string
   error: string | null
   tags: string[]
+  analysis: ThoughtAnalysisSummary | null
 }
 
 type TagStats = {
@@ -109,6 +120,110 @@ function App() {
     })()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loading, user, tagQuery])
+
+  const statusByThoughtIdRef = useRef<Record<number, ThoughtAnalysisSummary['status']>>({})
+  const tagsByNameRef = useRef<Set<string>>(new Set())
+  const tagsRefreshInFlightRef = useRef(false)
+
+  useEffect(() => {
+    tagsByNameRef.current = new Set(tags.map((t) => t.name))
+  }, [tags])
+
+  const pollIdsKey = useMemo(() => {
+    const ids = thoughts
+      .filter((t) => t.analysis && t.analysis.status !== 'done')
+      .map((t) => t.id)
+      .slice(0, 200)
+    return ids.join(',')
+  }, [thoughts])
+
+  useEffect(() => {
+    if (loading) return
+    if (!user) return
+    if (busy) return
+    if (!pollIdsKey) return
+
+    let stopped = false
+    let inFlight = false
+
+    async function refreshThoughtById(id: number): Promise<void> {
+      try {
+        const data = await apiFetch<{ thought: Thought }>({
+          path: `/api/thoughts/${id}`,
+          getIdToken,
+        })
+
+        if (stopped) return
+
+        setThoughts((prev) => prev.map((t) => (t.id === id ? data.thought : t)))
+
+        // If the thought contains a tag we haven't loaded stats for yet, refresh tags.
+        const hasUnknown = (data.thought.tags ?? []).some((name) => !tagsByNameRef.current.has(name))
+        if (hasUnknown && !tagsRefreshInFlightRef.current) {
+          tagsRefreshInFlightRef.current = true
+          try {
+            await refreshTags()
+          } finally {
+            tagsRefreshInFlightRef.current = false
+          }
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    async function tick() {
+      if (stopped) return
+      if (inFlight) return
+      inFlight = true
+      try {
+        const data = await apiFetch<{ summaries: Record<string, ThoughtAnalysisSummary | null> }>({
+          path: `/api/thoughts/analysis-status?ids=${encodeURIComponent(pollIdsKey)}`,
+          getIdToken,
+        })
+
+        if (stopped) return
+
+        const idsToRefresh: number[] = []
+        for (const [k, summary] of Object.entries(data.summaries)) {
+          const id = Number(k)
+          if (!Number.isFinite(id) || !summary) continue
+
+          const prev = statusByThoughtIdRef.current[id]
+          statusByThoughtIdRef.current[id] = summary.status
+
+          if (prev && prev !== summary.status && (summary.status === 'done' || summary.status === 'error')) {
+            idsToRefresh.push(id)
+          }
+        }
+
+        setThoughts((prev) =>
+          prev.map((t) => {
+            const next = data.summaries[String(t.id)]
+            return next === undefined ? t : { ...t, analysis: next }
+          }),
+        )
+
+        for (const id of idsToRefresh) {
+          await refreshThoughtById(id)
+        }
+      } catch {
+        // ignore polling errors
+      } finally {
+        inFlight = false
+      }
+    }
+
+    // Update quickly, then keep polling.
+    void tick()
+    const interval = window.setInterval(() => void tick(), 2500)
+
+    return () => {
+      stopped = true
+      window.clearInterval(interval)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, user, busy, pollIdsKey])
 
   async function onCreateThought() {
     if (busy) return
@@ -308,6 +423,18 @@ function App() {
   )
 }
 
+function analysisLabel(a: ThoughtAnalysisSummary | null): { text: string; title: string; className: string } | null {
+  if (!a) return null
+
+  const progress = `${a.done}/${a.total}`
+  const title = `Jobs: ${a.total} (queued ${a.queued}, processing ${a.processing}, done ${a.done}, error ${a.error})`
+
+  if (a.status === 'error') return { text: 'Error', title, className: 'status error' }
+  if (a.status === 'processing') return { text: `Processing ${progress}`, title, className: 'status processing' }
+  if (a.status === 'queued') return { text: `Queued ${progress}`, title, className: 'status queued' }
+  return { text: 'Done', title, className: 'status done' }
+}
+
 function ThoughtCard(props: {
   thought: Thought
   busy: boolean
@@ -320,12 +447,19 @@ function ThoughtCard(props: {
 
   useEffect(() => setDraft(thought.body), [thought.body])
 
+  const status = analysisLabel(thought.analysis)
+
   return (
     <article className='thought'>
       <div className='thoughtMeta'>
         <span className='muted'>#{thought.id}</span>
         <span className='muted'>{formatTs(thought.created_at)}</span>
         {thought.updated_at ? <span className='muted'>(edited {formatTs(thought.updated_at)})</span> : null}
+        {status ? (
+          <span className={`chip ${status.className}`} title={status.title}>
+            {status.text}
+          </span>
+        ) : null}
       </div>
 
       {editing ? (

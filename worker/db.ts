@@ -34,6 +34,16 @@ export type AnalysisJobRow = {
   result_json: string | null
 }
 
+export type AnalysisJobStatusSummaryRow = {
+  thought_id: number
+  total: number
+  queued: number
+  processing: number
+  done: number
+  error: number
+  last_updated_at: number
+}
+
 export async function ensureUser(env: Env, auth: AuthContext) {
   await env.DB.prepare(
     `INSERT INTO users(uid, email, display_name, photo_url, last_seen_at)
@@ -287,6 +297,38 @@ export async function getAnalysisJobById(env: Env, id: number): Promise<Analysis
   const row = results[0]
   if (!row) throw new Error('Analysis job not found')
   return row
+}
+
+export async function getAnalysisJobStatusSummariesForThoughtIds(
+  env: Env,
+  uid: string,
+  thoughtIds: number[],
+): Promise<Map<number, AnalysisJobStatusSummaryRow>> {
+  const out = new Map<number, AnalysisJobStatusSummaryRow>()
+  if (thoughtIds.length === 0) return out
+
+  const placeholders = thoughtIds.map(() => '?').join(',')
+  const { results } = await env.DB.prepare(
+    `SELECT
+      thought_id AS thought_id,
+      COUNT(*) AS total,
+      SUM(CASE WHEN status = 'queued' THEN 1 ELSE 0 END) AS queued,
+      SUM(CASE WHEN status = 'processing' THEN 1 ELSE 0 END) AS processing,
+      SUM(CASE WHEN status = 'done' THEN 1 ELSE 0 END) AS done,
+      SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) AS error,
+      MAX(updated_at) AS last_updated_at
+     FROM analysis_jobs
+     WHERE uid = ? AND thought_id IN (${placeholders})
+     GROUP BY thought_id`
+  )
+    .bind(uid, ...thoughtIds)
+    .all<AnalysisJobStatusSummaryRow>()
+
+  for (const row of results) {
+    out.set(row.thought_id, row)
+  }
+
+  return out
 }
 
 export async function markJobProcessing(env: Env, id: number): Promise<void> {

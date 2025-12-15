@@ -18,6 +18,8 @@ import {
   getThoughtById,
   getThoughtTags,
   setThoughtTagsAiOnly,
+  getAnalysisJobStatusSummariesForThoughtIds,
+  type AnalysisJobStatusSummaryRow,
 } from './db'
 import { CloudflareAiApiClient, extractAiOutputText } from './cloudflareAiApiClient'
 import {
@@ -33,6 +35,36 @@ type ApiErrorBody = {
 
 type AnalysisQueueMessage = {
   jobId: number
+}
+
+type ThoughtAnalysisSummary = {
+  status: 'queued' | 'processing' | 'done' | 'error'
+  total: number
+  queued: number
+  processing: number
+  done: number
+  error: number
+  last_updated_at: number
+}
+
+function summarizeJobs(row: AnalysisJobStatusSummaryRow | undefined): ThoughtAnalysisSummary | null {
+  if (!row || row.total <= 0) return null
+
+  let status: ThoughtAnalysisSummary['status'] = 'done'
+  if (row.error > 0) status = 'error'
+  else if (row.processing > 0) status = 'processing'
+  else if (row.queued > 0) status = 'queued'
+  else if (row.done >= row.total) status = 'done'
+
+  return {
+    status,
+    total: row.total,
+    queued: row.queued,
+    processing: row.processing,
+    done: row.done,
+    error: row.error,
+    last_updated_at: row.last_updated_at,
+  }
 }
 
 function json(data: unknown, init?: ResponseInit): Response {
@@ -62,6 +94,19 @@ function parseTagsParam(tags: string | null): string[] {
     .split(',')
     .map((t) => t.trim())
     .filter((t) => t.length > 0)
+}
+
+function parseIdsParam(ids: string | null): number[] {
+  if (!ids) return []
+  const out: number[] = []
+  for (const part of ids.split(',')) {
+    const trimmed = part.trim()
+    if (!trimmed) continue
+    const n = Number(trimmed)
+    if (!Number.isFinite(n) || !Number.isInteger(n) || n <= 0) continue
+    out.push(n)
+  }
+  return out
 }
 
 async function requireAuth(request: Request, env: Env) {
@@ -94,6 +139,21 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
     return json({ uid: auth.uid, email: auth.email, name: auth.name, picture: auth.picture })
   }
 
+  if (request.method === 'GET' && url.pathname === '/api/thoughts/analysis-status') {
+    const ids = parseIdsParam(url.searchParams.get('ids'))
+    if (ids.length === 0) return json({ summaries: {} })
+    if (ids.length > 200) return err(400, 'Too many ids (max 200)')
+
+    const map = await getAnalysisJobStatusSummariesForThoughtIds(env, auth.uid, ids)
+
+    const summaries: Record<number, ThoughtAnalysisSummary | null> = {}
+    for (const id of ids) {
+      summaries[id] = summarizeJobs(map.get(id))
+    }
+
+    return json({ summaries })
+  }
+
   if (request.method === 'POST' && url.pathname === '/api/thoughts') {
     let body: unknown
     try {
@@ -116,13 +176,45 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
     await env.ANALYSIS_QUEUE.send({ jobId: job.id } satisfies AnalysisQueueMessage)
 
     return json({
-      thought: { ...thought, tags: [] as string[] },
+      thought: {
+        ...thought,
+        tags: [] as string[],
+        analysis: {
+          status: 'queued',
+          total: 1,
+          queued: 1,
+          processing: 0,
+          done: 0,
+          error: 0,
+          last_updated_at: job.updated_at,
+        } satisfies ThoughtAnalysisSummary,
+      },
       job: { id: job.id, step: job.step, status: job.status },
       next_cursor: `${thought.created_at}:${thought.id}`,
     })
   }
 
   const thoughtIdMatch = url.pathname.match(/^\/api\/thoughts\/(\d+)$/)
+  if (thoughtIdMatch && request.method === 'GET') {
+    const id = Number(thoughtIdMatch[1])
+
+    const thought = await getThoughtById(env, auth.uid, id)
+    if (thought.deleted_at) return err(404, 'Thought not found')
+
+    const [tags, jobSummaryMap] = await Promise.all([
+      getThoughtTags(env, thought.id),
+      getAnalysisJobStatusSummariesForThoughtIds(env, auth.uid, [thought.id]),
+    ])
+
+    return json({
+      thought: {
+        ...thought,
+        tags,
+        analysis: summarizeJobs(jobSummaryMap.get(thought.id)),
+      },
+    })
+  }
+
   if (thoughtIdMatch && request.method === 'PATCH') {
     const id = Number(thoughtIdMatch[1])
 
@@ -149,7 +241,19 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
     const tags = await getThoughtTags(env, thought.id)
 
     return json({
-      thought: { ...thought, tags },
+      thought: {
+        ...thought,
+        tags,
+        analysis: {
+          status: 'queued',
+          total: 1,
+          queued: 1,
+          processing: 0,
+          done: 0,
+          error: 0,
+          last_updated_at: job.updated_at,
+        } satisfies ThoughtAnalysisSummary,
+      },
       job: { id: job.id, step: job.step, status: job.status },
     })
   }
@@ -165,15 +269,21 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
     const cursor = parseCursor(url.searchParams.get('cursor'))
 
     const thoughts = await listThoughts(env, { uid: auth.uid, limit, cursor })
-    const tagMap = await getTagsForThoughtIds(
-      env,
-      thoughts.map((t) => t.id),
-    )
+
+    const thoughtIds = thoughts.map((t) => t.id)
+    const [tagMap, jobSummaryMap] = await Promise.all([
+      getTagsForThoughtIds(env, thoughtIds),
+      getAnalysisJobStatusSummariesForThoughtIds(env, auth.uid, thoughtIds),
+    ])
 
     const next = thoughts.length > 0 ? thoughts[thoughts.length - 1] : undefined
 
     return json({
-      thoughts: thoughts.map((t) => ({ ...t, tags: tagMap.get(t.id) ?? [] })),
+      thoughts: thoughts.map((t) => ({
+        ...t,
+        tags: tagMap.get(t.id) ?? [],
+        analysis: summarizeJobs(jobSummaryMap.get(t.id)),
+      })),
       next_cursor: next ? `${next.created_at}:${next.id}` : null,
     })
   }
@@ -202,15 +312,21 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
     if (tags.length === 0) return err(400, 'tags is required')
 
     const thoughts = await listThoughtsByTagNames(env, { uid: auth.uid, tags, limit, cursor })
-    const tagMap = await getTagsForThoughtIds(
-      env,
-      thoughts.map((t) => t.id),
-    )
+
+    const thoughtIds = thoughts.map((t) => t.id)
+    const [tagMap, jobSummaryMap] = await Promise.all([
+      getTagsForThoughtIds(env, thoughtIds),
+      getAnalysisJobStatusSummariesForThoughtIds(env, auth.uid, thoughtIds),
+    ])
 
     const next = thoughts.length > 0 ? thoughts[thoughts.length - 1] : undefined
 
     return json({
-      thoughts: thoughts.map((t) => ({ ...t, tags: tagMap.get(t.id) ?? [] })),
+      thoughts: thoughts.map((t) => ({
+        ...t,
+        tags: tagMap.get(t.id) ?? [],
+        analysis: summarizeJobs(jobSummaryMap.get(t.id)),
+      })),
       next_cursor: next ? `${next.created_at}:${next.id}` : null,
     })
   }
@@ -312,7 +428,7 @@ export default {
         message.ack()
       } catch (e) {
         const err = e instanceof Error ? e : new Error(String(e))
-        const details = (err as any).details as unknown
+        const details = (err as { details?: unknown }).details
 
         const errorDetails = {
           name: err.name,

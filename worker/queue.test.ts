@@ -22,6 +22,7 @@ const dbMocks = vi.hoisted(() => {
     createAnalysisJob: vi.fn(),
     listThoughts: vi.fn(),
     getTagsForThoughtIds: vi.fn(),
+    getAnalysisJobStatusSummariesForThoughtIds: vi.fn(),
     listUserTagsWithStats: vi.fn(),
     listThoughtsByTagNames: vi.fn(),
   }

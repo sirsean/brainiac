@@ -144,6 +144,26 @@
   border: 1px solid rgba(255, 255, 255, 0.12);
 }
 
+.chip.status {
+  font-size: 0.85em;
+}
+
+.chip.status.queued {
+  border-color: rgba(100, 108, 255, 0.8);
+}
+
+.chip.status.processing {
+  border-color: rgba(255, 200, 80, 0.9);
+}
+
+.chip.status.done {
+  border-color: rgba(80, 255, 140, 0.6);
+}
+
+.chip.status.error {
+  border-color: rgba(255, 80, 80, 0.85);
+}
+
 .muted {
   opacity: 0.7;
 }
