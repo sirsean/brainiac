@@ -124,6 +124,14 @@ function App() {
   const statusByThoughtIdRef = useRef<Record<number, ThoughtAnalysisSummary['status']>>({})
   const tagsByNameRef = useRef<Set<string>>(new Set())
   const tagsRefreshInFlightRef = useRef(false)
+  const mountedRef = useRef(true)
+
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+    }
+  }, [])
 
   useEffect(() => {
     tagsByNameRef.current = new Set(tags.map((t) => t.name))
@@ -153,7 +161,7 @@ function App() {
           getIdToken,
         })
 
-        if (stopped) return
+        if (!mountedRef.current) return
 
         setThoughts((prev) => prev.map((t) => (t.id === id ? data.thought : t)))
 
