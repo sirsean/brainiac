@@ -6,7 +6,14 @@
   }
 
   body {
-    @apply min-h-screen bg-black text-amber-100 font-mono antialiased;
+    @apply min-h-screen text-amber-100 font-mono antialiased;
+    background-color: #020109;
+    background-image:
+      radial-gradient(circle at top, rgba(250, 204, 21, 0.14), transparent 55%),
+      linear-gradient(to right, rgba(250, 204, 21, 0.08) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(250, 204, 21, 0.05) 1px, transparent 1px);
+    background-size: 100% 100%, 80px 80px, 80px 80px;
+    background-attachment: fixed;
   }
 
   #root {

@@ -410,7 +410,7 @@ function App() {
   }, [navVisible, navOpen])
 
   return (
-    <div className="min-h-screen bg-black text-amber-100 font-mono flex flex-col">
+    <div className="min-h-screen text-amber-100 font-mono flex flex-col">
       <header className="border-b border-amber-400/40 bg-black/80 backdrop-blur sticky top-0 z-20">
         <div className="mx-auto flex max-w-5xl items-center justify-between gap-4 px-4 py-3">
           <div className="flex items-center gap-3">
