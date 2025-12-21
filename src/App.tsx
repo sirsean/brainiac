@@ -726,25 +726,40 @@ function ThoughtCard(props: {
   const { thought, onDelete, onEdit, busy } = props
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(thought.body)
+  const [actionsOpen, setActionsOpen] = useState(false)
 
   useEffect(() => setDraft(thought.body), [thought.body])
 
   const status = analysisLabel(thought.analysis)
+  const showActions = actionsOpen || editing
 
   return (
     <article className="rounded-xl border border-amber-400/25 bg-black/70 p-3 shadow-[0_0_32px_rgba(250,204,21,0.08)]">
       <div className="mb-2 flex flex-wrap items-center gap-3 text-[0.7rem] text-amber-200/75">
-        <span className="text-amber-400/80">#{thought.id}</span>
-        <span className="muted">{formatTs(thought.created_at)}</span>
-        {thought.updated_at ? <span className="muted">(edited {formatTs(thought.updated_at)})</span> : null}
-        {status ? (
-          <span
-            className={`chip status ${status.className} ml-auto border px-2 py-0.5 text-[0.65rem] uppercase tracking-[0.18em] text-amber-100`}
-            title={status.title}
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="text-amber-400/80">#{thought.id}</span>
+          <span className="muted">{formatTs(thought.created_at)}</span>
+          {thought.updated_at ? <span className="muted">(edited {formatTs(thought.updated_at)})</span> : null}
+        </div>
+        <div className="ml-auto flex items-center gap-2">
+          {status ? (
+            <span
+              className={`chip status ${status.className} border px-2 py-0.5 text-[0.65rem] uppercase tracking-[0.18em] text-amber-100`}
+              title={status.title}
+            >
+              {status.text}
+            </span>
+          ) : null}
+          <button
+            type="button"
+            onClick={() => setActionsOpen((open) => !open)}
+            disabled={busy}
+            aria-label={showActions ? 'Hide actions' : 'Show actions'}
+            className="rounded border border-amber-400/40 bg-black/40 px-1.5 py-0.5 text-[0.6rem] uppercase tracking-[0.18em] text-amber-200 hover:border-amber-300/80 hover:bg-amber-500/10 disabled:cursor-not-allowed disabled:opacity-40"
           >
-            {status.text}
-          </span>
-        ) : null}
+            ···
+          </button>
+        </div>
       </div>
 
       {editing ? (
@@ -771,51 +786,58 @@ function ThoughtCard(props: {
         ))}
       </div>
 
-      <div className="mt-3 flex flex-wrap gap-2 text-[0.7rem]">
-        {editing ? (
-          <>
-            <button
-              onClick={() =>
-                void (async () => {
-                  await onEdit(thought.id, draft)
-                  setEditing(false)
-                })()
-              }
-              disabled={busy}
-              type="button"
-              className="rounded border border-emerald-400/80 bg-emerald-500/10 px-3 py-1 uppercase tracking-[0.18em] text-emerald-100 hover:bg-emerald-500/20 disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              Save
-            </button>
-            <button
-              onClick={() => setEditing(false)}
-              disabled={busy}
-              type="button"
-              className="rounded border border-amber-400/40 bg-black/40 px-3 py-1 uppercase tracking-[0.18em] text-amber-200 hover:border-amber-300/70 hover:bg-amber-500/10 disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              Cancel
-            </button>
-          </>
-        ) : (
-          <>
-            <button
-              onClick={() => setEditing(true)}
-              disabled={busy}
-              type="button"
-              className="rounded border border-amber-400/60 bg-black/40 px-3 py-1 uppercase tracking-[0.18em] text-amber-200 hover:border-amber-300/90 hover:bg-amber-500/10 disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              Edit
-            </button>
-            <button
-              onClick={() => void onDelete(thought.id)}
-              disabled={busy}
-              type="button"
-              className="rounded border border-red-500/70 bg-red-500/10 px-3 py-1 uppercase tracking-[0.18em] text-red-100 hover:bg-red-500/20 disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              Delete
-            </button>
-          </>
-        )}
+      <div
+        className={
+          'mt-3 overflow-hidden transition-all duration-200 ' +
+          (showActions ? 'max-h-16 opacity-100' : 'max-h-0 opacity-0')
+        }
+      >
+        <div className="flex flex-wrap gap-2 text-[0.7rem]">
+          {editing ? (
+            <>
+              <button
+                onClick={() =>
+                  void (async () => {
+                    await onEdit(thought.id, draft)
+                    setEditing(false)
+                  })()
+                }
+                disabled={busy}
+                type="button"
+                className="rounded border border-emerald-400/80 bg-emerald-500/10 px-3 py-1 uppercase tracking-[0.18em] text-emerald-100 hover:bg-emerald-500/20 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Save
+              </button>
+              <button
+                onClick={() => setEditing(false)}
+                disabled={busy}
+                type="button"
+                className="rounded border border-amber-400/40 bg-black/40 px-3 py-1 uppercase tracking-[0.18em] text-amber-200 hover:border-amber-300/70 hover:bg-amber-500/10 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Cancel
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                onClick={() => setEditing(true)}
+                disabled={busy}
+                type="button"
+                className="rounded border border-amber-400/60 bg-black/40 px-3 py-1 uppercase tracking-[0.18em] text-amber-200 hover:border-amber-300/90 hover:bg-amber-500/10 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Edit
+              </button>
+              <button
+                onClick={() => void onDelete(thought.id)}
+                disabled={busy}
+                type="button"
+                className="rounded border border-red-500/70 bg-red-500/10 px-3 py-1 uppercase tracking-[0.18em] text-red-100 hover:bg-red-500/20 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Delete
+              </button>
+            </>
+          )}
+        </div>
       </div>
     </article>
   )
