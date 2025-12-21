@@ -3,6 +3,8 @@ type CloudflareApiError = {
   message?: string
 }
 
+type ErrorWithDetails = Error & { details?: unknown }
+
 export class CloudflareAiApiClient {
   private readonly accountId: string
   private readonly apiToken: string
@@ -25,16 +27,23 @@ export class CloudflareAiApiClient {
     // Debug-friendly preview (truncate potentially large/sensitive text fields).
     const requestBodyPreview = (() => {
       try {
-        const clone = structuredClone(payload) as any
-        const msgs = clone?.input
+        const clone = structuredClone(payload) as Record<string, unknown>
+
+        const msgs = clone.input
         if (Array.isArray(msgs)) {
           for (const m of msgs) {
-            const content = m?.content
-            if (Array.isArray(content)) {
-              for (const c of content) {
-                if (c && typeof c === 'object' && typeof c.text === 'string') {
-                  c.text = c.text.length > 300 ? c.text.slice(0, 300) + '…<truncated>' : c.text
-                }
+            if (!m || typeof m !== 'object') continue
+            const msg = m as Record<string, unknown>
+
+            const content = msg.content
+            if (!Array.isArray(content)) continue
+
+            for (const c of content) {
+              if (!c || typeof c !== 'object') continue
+              const chunk = c as Record<string, unknown>
+              const text = chunk.text
+              if (typeof text === 'string') {
+                chunk.text = text.length > 300 ? text.slice(0, 300) + '…<truncated>' : text
               }
             }
           }
@@ -63,8 +72,8 @@ export class CloudflareAiApiClient {
     const rawTextPreview = rawText.length > 4000 ? rawText.slice(0, 4000) + '…<truncated>' : rawText
 
     if (!res.ok) {
-      const err = new Error(`Cloudflare AI API request failed (HTTP ${res.status})`)
-      ;(err as any).details = {
+      const err: ErrorWithDetails = new Error(`Cloudflare AI API request failed (HTTP ${res.status})`)
+      err.details = {
         url,
         status: res.status,
         cloudflare_errors: null,
@@ -78,8 +87,8 @@ export class CloudflareAiApiClient {
     try {
       json = JSON.parse(rawText) as unknown
     } catch {
-      const err = new Error(`Cloudflare AI API returned non-JSON response (HTTP ${res.status})`)
-      ;(err as any).details = {
+      const err: ErrorWithDetails = new Error(`Cloudflare AI API returned non-JSON response (HTTP ${res.status})`)
+      err.details = {
         url,
         status: res.status,
         request_body_preview: requestBodyPreview,
@@ -89,22 +98,27 @@ export class CloudflareAiApiClient {
     }
 
     // Some Cloudflare v4 endpoints wrap errors as { success: false, errors: [...] } even when HTTP 200.
-    if (json && typeof json === 'object' && 'success' in json && (json as any).success === false) {
-      const errors = Array.isArray((json as any).errors) ? ((json as any).errors as CloudflareApiError[]) : []
-      const errMsg =
-        errors.length > 0
-          ? errors.map((e) => e.message ?? String(e.code ?? 'error')).join('; ')
-          : `Cloudflare AI API request failed (HTTP ${res.status})`
+    if (json && typeof json === 'object' && 'success' in json) {
+      const success = (json as { success?: unknown }).success
+      if (success === false) {
+        const errorsVal = (json as { errors?: unknown }).errors
+        const errors = Array.isArray(errorsVal) ? (errorsVal as CloudflareApiError[]) : []
 
-      const err = new Error(errMsg)
-      ;(err as any).details = {
-        url,
-        status: res.status,
-        cloudflare_errors: errors.length > 0 ? errors : null,
-        request_body_preview: requestBodyPreview,
-        response_text_preview: rawTextPreview,
+        const errMsg =
+          errors.length > 0
+            ? errors.map((e) => e.message ?? String(e.code ?? 'error')).join('; ')
+            : `Cloudflare AI API request failed (HTTP ${res.status})`
+
+        const err: ErrorWithDetails = new Error(errMsg)
+        err.details = {
+          url,
+          status: res.status,
+          cloudflare_errors: errors.length > 0 ? errors : null,
+          request_body_preview: requestBodyPreview,
+          response_text_preview: rawTextPreview,
+        }
+        throw err
       }
-      throw err
     }
 
     return json as T
@@ -127,11 +141,14 @@ export function extractAiOutputText(result: unknown): string {
     if (Array.isArray(r.output)) {
       for (const item of r.output) {
         if (!item || typeof item !== 'object') continue
-        const content = (item as any).content
+        const content = (item as { content?: unknown }).content
         if (!Array.isArray(content)) continue
         for (const c of content) {
-          if (c && typeof c === 'object' && (c as any).type === 'output_text' && typeof (c as any).text === 'string') {
-            return (c as any).text as string
+          if (!c || typeof c !== 'object') continue
+          const type = (c as { type?: unknown }).type
+          const text = (c as { text?: unknown }).text
+          if (type === 'output_text' && typeof text === 'string') {
+            return text
           }
         }
       }

@@ -32,7 +32,8 @@ describe('CloudflareAiApiClient', () => {
     const result = await client.run('@cf/openai/gpt-oss-20b', { input: [] })
 
     // Ensure model is sent in the request body.
-    const body = (((fetchMock as any).mock.calls[0]?.[1] as { body?: unknown } | undefined)?.body)
+    const init = fetchMock.mock.calls[0]?.[1] as { body?: unknown } | undefined
+    const body = init?.body
     expect(typeof body).toBe('string')
     expect(body as string).toContain('"model":"@cf/openai/gpt-oss-20b"')
 

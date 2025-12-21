@@ -2,17 +2,9 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
 
 import { apiFetch } from './api'
+import { analysisLabel, type ThoughtAnalysisSummary } from './analysisLabel'
+import { Calendar } from './Calendar'
 import { useAuth } from './useAuth'
-
-type ThoughtAnalysisSummary = {
-  status: 'queued' | 'processing' | 'done' | 'error'
-  total: number
-  queued: number
-  processing: number
-  done: number
-  error: number
-  last_updated_at: number
-}
 
 type Thought = {
   id: number
@@ -42,6 +34,15 @@ function formatTs(ts: number | null | undefined): string {
   return new Date(ts * 1000).toLocaleString()
 }
 
+function pad2(n: number): string {
+  return String(n).padStart(2, '0')
+}
+
+function currentMonthKey(): string {
+  const d = new Date()
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}`
+}
+
 function App() {
   const { loading, user, signIn, signOut, getIdToken } = useAuth()
 
@@ -50,6 +51,9 @@ function App() {
   const [thoughtsCursor, setThoughtsCursor] = useState<string | null>(null)
   const [tags, setTags] = useState<TagStats[]>([])
   const [selectedTags, setSelectedTags] = useState<string[]>([])
+  const [selectedDate, setSelectedDate] = useState<string | null>(null) // YYYY-MM-DD (local)
+  const [calendarMonth, setCalendarMonth] = useState<string>(() => currentMonthKey()) // YYYY-MM
+  const [dayCounts, setDayCounts] = useState<Record<string, number>>({})
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
@@ -65,11 +69,41 @@ function App() {
 
   async function refreshThoughts(reset = true) {
     const params = new URLSearchParams()
-    params.set('limit', '50')
 
     if (!reset && thoughtsCursor) {
       params.set('cursor', thoughtsCursor)
     }
+
+    const tzOffsetMin = String(new Date().getTimezoneOffset())
+
+    // If a date is selected, show that day's thoughts (optionally filtered by tags).
+    if (selectedDate) {
+      params.set('date', selectedDate)
+      params.set('tz_offset_min', tzOffsetMin)
+      params.set('limit', '200')
+
+      if (selectedTags.length > 0) {
+        params.set('tags', tagQuery)
+      }
+
+      const path = `/api/thoughts/by-day?${params.toString()}`
+      const data = await apiFetch<{ thoughts: Thought[]; next_cursor: string | null }>({
+        path,
+        getIdToken,
+      })
+
+      if (reset) {
+        setThoughts(data.thoughts)
+      } else {
+        setThoughts((prev) => [...prev, ...data.thoughts])
+      }
+
+      setThoughtsCursor(data.next_cursor)
+      return
+    }
+
+    // Default (no date selected): keep the UI focused on the most recent few.
+    params.set('limit', '5')
 
     if (selectedTags.length > 0) {
       params.set('tags', tagQuery)
@@ -104,6 +138,26 @@ function App() {
     setThoughtsCursor(data.next_cursor)
   }
 
+  async function refreshDayCounts() {
+    const tzOffsetMin = String(new Date().getTimezoneOffset())
+
+    const params = new URLSearchParams()
+    params.set('month', calendarMonth)
+    params.set('tz_offset_min', tzOffsetMin)
+
+    if (selectedTags.length > 0) {
+      params.set('tags', tagQuery)
+    }
+
+    const path = `/api/thoughts/day-counts?${params.toString()}`
+    const data = await apiFetch<{ counts: Record<string, number> }>({
+      path,
+      getIdToken,
+    })
+
+    setDayCounts(data.counts)
+  }
+
   useEffect(() => {
     if (loading) return
     if (!user) return
@@ -119,7 +173,21 @@ function App() {
       }
     })()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loading, user, tagQuery])
+  }, [loading, user, tagQuery, selectedDate])
+
+  useEffect(() => {
+    if (loading) return
+    if (!user) return
+
+    void (async () => {
+      try {
+        await refreshDayCounts()
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e))
+      }
+    })()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, user, tagQuery, calendarMonth])
 
   const statusByThoughtIdRef = useRef<Record<number, ThoughtAnalysisSummary['status']>>({})
   const tagsByNameRef = useRef<Set<string>>(new Set())
@@ -305,6 +373,27 @@ function App() {
     setSelectedTags((prev) => (prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]))
   }
 
+  function changeCalendarMonth(deltaMonths: number) {
+    const m = calendarMonth.match(/^(\d{4})-(\d{2})$/)
+    const y = m ? Number(m[1]) : new Date().getFullYear()
+    const mm = m ? Number(m[2]) - 1 : new Date().getMonth()
+
+    const next = new Date(y, mm + deltaMonths, 1)
+    setCalendarMonth(`${next.getFullYear()}-${pad2(next.getMonth() + 1)}`)
+  }
+
+  function selectDate(date: string) {
+    // Calendar sends '' for clear.
+    const next = date ? date : null
+    setSelectedDate(next)
+
+    // If selecting a date outside the visible month, jump the calendar.
+    if (date) {
+      const m = date.slice(0, 7)
+      if (m !== calendarMonth) setCalendarMonth(m)
+    }
+  }
+
   return (
     <div className='app'>
       <header className='topbar'>
@@ -336,6 +425,16 @@ function App() {
       {!loading && user ? (
         <main className='layout'>
           <aside className='sidebar'>
+            <h2>Browse</h2>
+
+            <Calendar
+              month={calendarMonth}
+              selectedDate={selectedDate}
+              countsByDay={dayCounts}
+              onChangeMonth={changeCalendarMonth}
+              onSelectDate={selectDate}
+            />
+
             <h2>Tags</h2>
             <div className='tagList'>
               {tags.length === 0 ? <div className='muted'>No tags yet.</div> : null}
@@ -358,8 +457,15 @@ function App() {
               <textarea
                 value={newThought}
                 onChange={(e) => setNewThought(e.target.value)}
+                onKeyDown={(e) => {
+                  // Submit with Ctrl+Enter (or Cmd+Enter on macOS), keep Enter for newlines.
+                  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                    e.preventDefault()
+                    void onCreateThought()
+                  }
+                }}
                 placeholder='Write a thought…'
-                rows={3}
+                rows={8}
               />
               <div className='composerActions'>
                 <button onClick={() => void onCreateThought()} disabled={busy} aria-label='add thought'>
@@ -385,36 +491,44 @@ function App() {
             </div>
 
             <div className='filters'>
-              {selectedTags.length > 0 ? (
-                <div>
-                  Filtering by: {selectedTags.map((t) => (
-                    <span key={t} className='chip'>
-                      {t}
-                    </span>
-                  ))}
-                  <button onClick={() => setSelectedTags([])} type='button'>
-                    Clear
-                  </button>
-                </div>
-              ) : (
-                <div className='muted'>Newest first</div>
-              )}
+              <div>
+                {selectedDate ? (
+                  <>
+                    <span className='chip'>Date: {selectedDate}</span>
+                    <button onClick={() => setSelectedDate(null)} type='button'>
+                      Clear date
+                    </button>
+                  </>
+                ) : (
+                  <span className='muted'>Newest first</span>
+                )}
+              </div>
+
+              <div>
+                {selectedTags.length > 0 ? (
+                  <>
+                    Filtering by: {selectedTags.map((t) => (
+                      <span key={t} className='chip'>
+                        {t}
+                      </span>
+                    ))}
+                    <button onClick={() => setSelectedTags([])} type='button'>
+                      Clear tags
+                    </button>
+                  </>
+                ) : null}
+              </div>
             </div>
 
             <div className='thoughtList'>
               {thoughts.length === 0 ? <div className='muted'>No thoughts yet.</div> : null}
-              {thoughts.map((t) => (
+              {(selectedDate ? thoughts : thoughts.slice(0, 5)).map((t) => (
                 <ThoughtCard key={t.id} thought={t} onDelete={onDeleteThought} onEdit={onEditThought} busy={busy} />
               ))}
             </div>
 
-            {thoughtsCursor ? (
-              <button
-                onClick={() => void refreshThoughts(false)}
-                disabled={busy}
-                aria-label='load more'
-                type='button'
-              >
+            {selectedDate && thoughtsCursor ? (
+              <button onClick={() => void refreshThoughts(false)} disabled={busy} aria-label='load more' type='button'>
                 Load more
               </button>
             ) : null}
@@ -429,18 +543,6 @@ function App() {
       </footer>
     </div>
   )
-}
-
-export function analysisLabel(a: ThoughtAnalysisSummary | null): { text: string; title: string; className: string } | null {
-  if (!a) return null
-
-  const progress = `${a.done}/${a.total}`
-  const title = `Jobs: ${a.total} (queued ${a.queued}, processing ${a.processing}, done ${a.done}, error ${a.error})`
-
-  if (a.status === 'error') return { text: 'Error', title, className: 'status error' }
-  if (a.status === 'processing') return { text: `Processing ${progress}`, title, className: 'status processing' }
-  if (a.status === 'queued') return { text: `Queued ${progress}`, title, className: 'status queued' }
-  return { text: 'Done', title, className: 'status done' }
 }
 
 function ThoughtCard(props: {

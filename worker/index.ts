@@ -8,6 +8,8 @@ import {
   listRecentUserTagNames,
   listThoughts,
   listThoughtsByTagNames,
+  listThoughtsInCreatedAtRange,
+  listThoughtCountsByLocalDay,
   listUserTagsWithStats,
   markJobDone,
   markJobError,
@@ -94,6 +96,58 @@ function parseTagsParam(tags: string | null): string[] {
     .split(',')
     .map((t) => t.trim())
     .filter((t) => t.length > 0)
+}
+
+function parseTzOffsetMinutesParam(raw: string | null): number {
+  const n = Number(raw ?? '0')
+  if (!Number.isFinite(n) || !Number.isInteger(n)) return 0
+  // Typical JS timezone offsets are within [-14h, +14h].
+  return Math.max(-14 * 60, Math.min(14 * 60, n))
+}
+
+function parseIsoDateParam(raw: string | null): { y: number; m: number; d: number; iso: string } | undefined {
+  if (!raw) return undefined
+  const m = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  if (!m) return undefined
+  const y = Number(m[1])
+  const mm = Number(m[2])
+  const d = Number(m[3])
+  if (!Number.isFinite(y) || !Number.isFinite(mm) || !Number.isFinite(d)) return undefined
+  if (mm < 1 || mm > 12) return undefined
+  if (d < 1 || d > 31) return undefined
+  return { y, m: mm, d, iso: raw }
+}
+
+function parseIsoMonthParam(raw: string | null): { y: number; m: number; iso: string } | undefined {
+  if (!raw) return undefined
+  const m = raw.match(/^(\d{4})-(\d{2})$/)
+  if (!m) return undefined
+  const y = Number(m[1])
+  const mm = Number(m[2])
+  if (!Number.isFinite(y) || !Number.isFinite(mm)) return undefined
+  if (mm < 1 || mm > 12) return undefined
+  return { y, m: mm, iso: raw }
+}
+
+function utcRangeForLocalDay(opts: { y: number; m: number; d: number; tzOffsetMinutes: number }): {
+  start: number
+  endExclusive: number
+} {
+  const { y, m, d, tzOffsetMinutes } = opts
+  // Local midnight converted to UTC: UTC = local + offset.
+  const startMs = Date.UTC(y, m - 1, d, 0, 0, 0) + tzOffsetMinutes * 60 * 1000
+  const start = Math.floor(startMs / 1000)
+  return { start, endExclusive: start + 24 * 60 * 60 }
+}
+
+function utcRangeForLocalMonth(opts: { y: number; m: number; tzOffsetMinutes: number }): {
+  start: number
+  endExclusive: number
+} {
+  const { y, m, tzOffsetMinutes } = opts
+  const startMs = Date.UTC(y, m - 1, 1, 0, 0, 0) + tzOffsetMinutes * 60 * 1000
+  const endMs = Date.UTC(y, m, 1, 0, 0, 0) + tzOffsetMinutes * 60 * 1000
+  return { start: Math.floor(startMs / 1000), endExclusive: Math.floor(endMs / 1000) }
 }
 
 export function parseIdsParam(ids: string | null): number[] {
@@ -329,6 +383,73 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
       })),
       next_cursor: next ? `${next.created_at}:${next.id}` : null,
     })
+  }
+
+  // List thoughts for a specific local day (optionally filtered by tags).
+  if (request.method === 'GET' && url.pathname === '/api/thoughts/by-day') {
+    const limit = Math.min(Math.max(Number(url.searchParams.get('limit') ?? '200'), 1), 200)
+    const cursor = parseCursor(url.searchParams.get('cursor'))
+
+    const date = parseIsoDateParam(url.searchParams.get('date'))
+    if (!date) return err(400, 'date is required (YYYY-MM-DD)')
+
+    const tzOffsetMinutes = parseTzOffsetMinutesParam(url.searchParams.get('tz_offset_min'))
+    const tags = parseTagsParam(url.searchParams.get('tags'))
+
+    const range = utcRangeForLocalDay({ y: date.y, m: date.m, d: date.d, tzOffsetMinutes })
+
+    const thoughts = await listThoughtsInCreatedAtRange(env, {
+      uid: auth.uid,
+      startCreatedAt: range.start,
+      endCreatedAtExclusive: range.endExclusive,
+      limit,
+      cursor,
+      tags: tags.length > 0 ? tags : undefined,
+    })
+
+    const thoughtIds = thoughts.map((t) => t.id)
+    const [tagMap, jobSummaryMap] = await Promise.all([
+      getTagsForThoughtIds(env, thoughtIds),
+      getAnalysisJobStatusSummariesForThoughtIds(env, auth.uid, thoughtIds),
+    ])
+
+    const next = thoughts.length > 0 ? thoughts[thoughts.length - 1] : undefined
+
+    return json({
+      thoughts: thoughts.map((t) => ({
+        ...t,
+        tags: tagMap.get(t.id) ?? [],
+        analysis: summarizeJobs(jobSummaryMap.get(t.id)),
+      })),
+      next_cursor: next ? `${next.created_at}:${next.id}` : null,
+    })
+  }
+
+  // Calendar helper: counts of thoughts per local day in a given month (optionally filtered by tags).
+  if (request.method === 'GET' && url.pathname === '/api/thoughts/day-counts') {
+    const month = parseIsoMonthParam(url.searchParams.get('month'))
+    if (!month) return err(400, 'month is required (YYYY-MM)')
+
+    const tzOffsetMinutes = parseTzOffsetMinutesParam(url.searchParams.get('tz_offset_min'))
+    const tzOffsetSeconds = tzOffsetMinutes * 60
+    const tags = parseTagsParam(url.searchParams.get('tags'))
+
+    const range = utcRangeForLocalMonth({ y: month.y, m: month.m, tzOffsetMinutes })
+
+    const rows = await listThoughtCountsByLocalDay(env, {
+      uid: auth.uid,
+      startCreatedAt: range.start,
+      endCreatedAtExclusive: range.endExclusive,
+      tzOffsetSeconds,
+      tags: tags.length > 0 ? tags : undefined,
+    })
+
+    const counts: Record<string, number> = {}
+    for (const r of rows) {
+      counts[r.day] = Number(r.count)
+    }
+
+    return json({ counts })
   }
 
   return err(404, 'Not found')

@@ -268,6 +268,130 @@ export async function listThoughtsByTagNames(env: Env, opts: {
   return results
 }
 
+export async function listThoughtsInCreatedAtRange(env: Env, opts: {
+  uid: string
+  startCreatedAt: number
+  endCreatedAtExclusive: number
+  limit: number
+  cursor?: { createdAt: number; id: number }
+  tags?: string[]
+}): Promise<ThoughtRow[]> {
+  const { uid, startCreatedAt, endCreatedAtExclusive, limit, cursor, tags } = opts
+
+  if (!tags || tags.length === 0) {
+    const cursorClause = cursor
+      ? 'AND (created_at < ? OR (created_at = ? AND id < ?))'
+      : ''
+
+    const sql =
+      `SELECT id, uid, body, created_at, updated_at, deleted_at, status, error
+       FROM thoughts
+       WHERE uid = ?
+         AND deleted_at IS NULL
+         AND created_at >= ?
+         AND created_at < ?
+         ${cursorClause}
+       ORDER BY created_at DESC, id DESC
+       LIMIT ?`
+
+    const bindings: unknown[] = [uid, startCreatedAt, endCreatedAtExclusive]
+    if (cursor) bindings.push(cursor.createdAt, cursor.createdAt, cursor.id)
+    bindings.push(limit)
+
+    const { results } = await env.DB.prepare(sql).bind(...bindings).all<ThoughtRow>()
+    return results
+  }
+
+  const tagPlaceholders = tags.map(() => '?').join(',')
+  const havingCount = tags.length
+
+  const cursorClause = cursor
+    ? 'AND (th.created_at < ? OR (th.created_at = ? AND th.id < ?))'
+    : ''
+
+  const sql =
+    `SELECT th.id, th.uid, th.body, th.created_at, th.updated_at, th.deleted_at, th.status, th.error
+     FROM thoughts th
+     JOIN thought_tags tt ON tt.thought_id = th.id
+     JOIN tags tg ON tg.id = tt.tag_id
+     WHERE th.uid = ?
+       AND th.deleted_at IS NULL
+       AND th.created_at >= ?
+       AND th.created_at < ?
+       AND tg.uid = ?
+       AND tg.name IN (${tagPlaceholders})
+       ${cursorClause}
+     GROUP BY th.id
+     HAVING COUNT(DISTINCT tg.name) = ?
+     ORDER BY th.created_at DESC, th.id DESC
+     LIMIT ?`
+
+  const bindings: unknown[] = [uid, startCreatedAt, endCreatedAtExclusive, uid, ...tags]
+  if (cursor) bindings.push(cursor.createdAt, cursor.createdAt, cursor.id)
+  bindings.push(havingCount, limit)
+
+  const { results } = await env.DB.prepare(sql).bind(...bindings).all<ThoughtRow>()
+  return results
+}
+
+type DayCountRow = { day: string; count: number }
+
+export async function listThoughtCountsByLocalDay(env: Env, opts: {
+  uid: string
+  startCreatedAt: number
+  endCreatedAtExclusive: number
+  tzOffsetSeconds: number
+  tags?: string[]
+}): Promise<DayCountRow[]> {
+  const { uid, startCreatedAt, endCreatedAtExclusive, tzOffsetSeconds, tags } = opts
+
+  // SQLite date() returns YYYY-MM-DD.
+  if (!tags || tags.length === 0) {
+    const { results } = await env.DB.prepare(
+      `SELECT date(th.created_at - ?, 'unixepoch') AS day, COUNT(*) AS count
+       FROM thoughts th
+       WHERE th.uid = ?
+         AND th.deleted_at IS NULL
+         AND th.created_at >= ?
+         AND th.created_at < ?
+       GROUP BY day
+       ORDER BY day ASC`,
+    )
+      .bind(tzOffsetSeconds, uid, startCreatedAt, endCreatedAtExclusive)
+      .all<DayCountRow>()
+
+    return results
+  }
+
+  const tagPlaceholders = tags.map(() => '?').join(',')
+  const havingCount = tags.length
+
+  const sql =
+    `WITH filtered AS (
+       SELECT th.id AS id, th.created_at AS created_at
+       FROM thoughts th
+       JOIN thought_tags tt ON tt.thought_id = th.id
+       JOIN tags tg ON tg.id = tt.tag_id
+       WHERE th.uid = ?
+         AND th.deleted_at IS NULL
+         AND th.created_at >= ?
+         AND th.created_at < ?
+         AND tg.uid = ?
+         AND tg.name IN (${tagPlaceholders})
+       GROUP BY th.id
+       HAVING COUNT(DISTINCT tg.name) = ?
+     )
+     SELECT date(created_at - ?, 'unixepoch') AS day, COUNT(*) AS count
+     FROM filtered
+     GROUP BY day
+     ORDER BY day ASC`
+
+  const bindings: unknown[] = [uid, startCreatedAt, endCreatedAtExclusive, uid, ...tags, havingCount, tzOffsetSeconds]
+
+  const { results } = await env.DB.prepare(sql).bind(...bindings).all<DayCountRow>()
+  return results
+}
+
 export async function createAnalysisJob(env: Env, opts: {
   uid: string
   thoughtId: number

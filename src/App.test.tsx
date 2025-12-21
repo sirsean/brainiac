@@ -1,4 +1,5 @@
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import type { User } from 'firebase/auth'
 import { act } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -17,7 +18,8 @@ const authMocks = vi.hoisted(() => {
 vi.mock('./api', () => apiMocks)
 vi.mock('./useAuth', () => authMocks)
 
-import App, { analysisLabel } from './App'
+import App from './App'
+import { analysisLabel, type ThoughtAnalysisSummary } from './analysisLabel'
 
 afterEach(() => {
   cleanup()
@@ -56,36 +58,36 @@ describe('analysisLabel', () => {
   })
 
   it('generates display text, title, and className for queued/processing/done/error', () => {
-    const base = {
+    const base: Omit<ThoughtAnalysisSummary, 'status'> = {
       total: 4,
       queued: 1,
       processing: 1,
       done: 2,
       error: 0,
       last_updated_at: 123,
-    } as const
+    }
 
     const title = 'Jobs: 4 (queued 1, processing 1, done 2, error 0)'
 
-    expect(analysisLabel({ ...base, status: 'queued' } as any)).toEqual({
+    expect(analysisLabel({ ...base, status: 'queued' })).toEqual({
       text: 'Queued 2/4',
       title,
       className: 'status queued',
     })
 
-    expect(analysisLabel({ ...base, status: 'processing' } as any)).toEqual({
+    expect(analysisLabel({ ...base, status: 'processing' })).toEqual({
       text: 'Processing 2/4',
       title,
       className: 'status processing',
     })
 
-    expect(analysisLabel({ ...base, status: 'done' } as any)).toEqual({
+    expect(analysisLabel({ ...base, status: 'done' })).toEqual({
       text: 'Done',
       title,
       className: 'status done',
     })
 
-    expect(analysisLabel({ ...base, status: 'error', error: 1 } as any)).toEqual({
+    expect(analysisLabel({ ...base, status: 'error', error: 1 })).toEqual({
       text: 'Error',
       title: 'Jobs: 4 (queued 1, processing 1, done 2, error 1)',
       className: 'status error',
@@ -93,11 +95,69 @@ describe('analysisLabel', () => {
   })
 })
 
-describe('App polling', () => {
+describe('App composer', () => {
   beforeEach(() => {
+    const fakeUser = { uid: 'u1', email: 'u1@example.com' } as unknown as User
+
     authMocks.useAuth.mockReturnValue({
       loading: false,
-      user: { uid: 'u1', email: 'u1@example.com' } as any,
+      user: fakeUser,
+      signIn: vi.fn(async () => undefined),
+      signOut: vi.fn(async () => undefined),
+      getIdToken: vi.fn(async () => 'token'),
+    })
+  })
+
+  it('submits the thought on Ctrl+Enter', async () => {
+    apiMocks.apiFetch.mockImplementation(async ({ path, method }: { path: string; method?: string }) => {
+      if (path === '/api/tags?limit=200') {
+        return { tags: [] }
+      }
+
+      if (path.startsWith('/api/thoughts/day-counts?')) {
+        return { counts: {} }
+      }
+
+      if (path.startsWith('/api/thoughts?')) {
+        return { thoughts: [], next_cursor: null }
+      }
+
+      if (path === '/api/thoughts' && method === 'POST') {
+        return {}
+      }
+
+      throw new Error(`Unexpected apiFetch path: ${path}`)
+    })
+
+    render(<App />)
+
+    const textarea = screen.getByPlaceholderText('Write a thought…')
+
+    await act(async () => {
+      fireEvent.change(textarea, { target: { value: 'hello world' } })
+      fireEvent.keyDown(textarea, { key: 'Enter', ctrlKey: true })
+      await Promise.resolve()
+    })
+
+    type ApiFetchCall = { path?: string; method?: string; body?: unknown }
+
+    const postCall = apiMocks.apiFetch.mock.calls.find((c) => {
+      const arg = c[0] as ApiFetchCall
+      return arg.path === '/api/thoughts' && arg.method === 'POST'
+    })
+
+    expect(postCall).toBeTruthy()
+    expect(((postCall![0] as ApiFetchCall).body as { body?: unknown } | undefined)?.body).toBe('hello world')
+  })
+})
+
+describe('App polling', () => {
+  beforeEach(() => {
+    const fakeUser = { uid: 'u1', email: 'u1@example.com' } as unknown as User
+
+    authMocks.useAuth.mockReturnValue({
+      loading: false,
+      user: fakeUser,
       signIn: vi.fn(async () => undefined),
       signOut: vi.fn(async () => undefined),
       getIdToken: vi.fn(async () => 'token'),
@@ -107,7 +167,7 @@ describe('App polling', () => {
   it('updates thought analysis status based on /api/thoughts/analysis-status responses', async () => {
     vi.useFakeTimers()
 
-    const processingSummary = {
+    const processingSummary: ThoughtAnalysisSummary = {
       status: 'processing',
       total: 1,
       queued: 0,
@@ -115,9 +175,9 @@ describe('App polling', () => {
       done: 0,
       error: 0,
       last_updated_at: 100,
-    } as const
+    }
 
-    const doneSummary = {
+    const doneSummary: ThoughtAnalysisSummary = {
       status: 'done',
       total: 1,
       queued: 0,
@@ -125,7 +185,7 @@ describe('App polling', () => {
       done: 1,
       error: 0,
       last_updated_at: 200,
-    } as const
+    }
 
     const initialThought = {
       id: 1,
@@ -151,6 +211,10 @@ describe('App polling', () => {
     apiMocks.apiFetch.mockImplementation(async ({ path }: { path: string }) => {
       if (path === '/api/tags?limit=200') {
         return { tags: [] }
+      }
+
+      if (path.startsWith('/api/thoughts/day-counts?')) {
+        return { counts: {} }
       }
 
       if (path.startsWith('/api/thoughts?')) {
