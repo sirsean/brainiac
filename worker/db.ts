@@ -1,5 +1,9 @@
 import type { AuthContext } from './auth'
 
+// NOTE: All *_at fields in this module are Unix epoch seconds in UTC as stored in D1.
+// The API layer exposes these numeric seconds directly; callers (e.g. the UI) are
+// responsible for converting to local time for display.
+
 export type ThoughtRow = {
   id: number
   uid: string

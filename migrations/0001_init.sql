@@ -1,5 +1,6 @@
 -- D1 migration: initial schema
 -- Note: D1 runs on SQLite.
+-- All *_at columns below are Unix epoch seconds in UTC (via sqlite unixepoch()).
 
 PRAGMA foreign_keys = ON;
 

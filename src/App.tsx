@@ -36,6 +36,8 @@ type TagStats = {
   most_recent_thought_at: number | null
 }
 
+// NOTE: All *_at timestamps from the API are Unix epoch seconds in UTC.
+// This helper converts them to the browser's local timezone for display.
 function formatTs(ts: number | null | undefined): string {
   if (!ts) return ''
   return new Date(ts * 1000).toLocaleString()
@@ -48,6 +50,43 @@ function pad2(n: number): string {
 function currentMonthKey(): string {
   const d = new Date()
   return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}`
+}
+
+function parseLocalDateKey(date: string | null): { y: number; m: number; d: number } | null {
+  if (!date) return null
+  const m = date.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  if (!m) return null
+  const y = Number(m[1])
+  const mm = Number(m[2])
+  const d = Number(m[3])
+  if (!Number.isFinite(y) || !Number.isFinite(mm) || !Number.isFinite(d)) return null
+  return { y, m: mm, d }
+}
+
+function parseLocalMonthKey(month: string | null): { y: number; m: number } | null {
+  if (!month) return null
+  const m = month.match(/^(\d{4})-(\d{2})$/)
+  if (!m) return null
+  const y = Number(m[1])
+  const mm = Number(m[2])
+  if (!Number.isFinite(y) || !Number.isFinite(mm)) return null
+  return { y, m: mm }
+}
+
+// Derive timezone offset (in minutes) for a specific local calendar date key (YYYY-MM-DD).
+export function tzOffsetMinutesForLocalDateKey(date: string | null): number {
+  const parsed = parseLocalDateKey(date)
+  if (!parsed) return new Date().getTimezoneOffset()
+  const d = new Date(parsed.y, parsed.m - 1, parsed.d, 0, 0, 0)
+  return d.getTimezoneOffset()
+}
+
+// Derive timezone offset (in minutes) for a specific local calendar month key (YYYY-MM).
+export function tzOffsetMinutesForLocalMonthKey(month: string | null): number {
+  const parsed = parseLocalMonthKey(month)
+  if (!parsed) return new Date().getTimezoneOffset()
+  const d = new Date(parsed.y, parsed.m - 1, 1, 0, 0, 0)
+  return d.getTimezoneOffset()
 }
 
 function App() {
@@ -84,10 +123,9 @@ function App() {
       params.set('cursor', thoughtsCursor)
     }
 
-    const tzOffsetMin = String(new Date().getTimezoneOffset())
-
     // If a date is selected, show that day's thoughts (optionally filtered by tags).
     if (selectedDate) {
+      const tzOffsetMin = String(tzOffsetMinutesForLocalDateKey(selectedDate))
       params.set('date', selectedDate)
       params.set('tz_offset_min', tzOffsetMin)
       params.set('limit', '200')
@@ -149,7 +187,7 @@ function App() {
   }
 
   async function refreshDayCounts() {
-    const tzOffsetMin = String(new Date().getTimezoneOffset())
+    const tzOffsetMin = String(tzOffsetMinutesForLocalMonthKey(calendarMonth))
 
     const params = new URLSearchParams()
     params.set('month', calendarMonth)

@@ -18,7 +18,7 @@ const authMocks = vi.hoisted(() => {
 vi.mock('./api', () => apiMocks)
 vi.mock('./useAuth', () => authMocks)
 
-import App from './App'
+import App, { tzOffsetMinutesForLocalDateKey, tzOffsetMinutesForLocalMonthKey } from './App'
 import { analysisLabel, type ThoughtAnalysisSummary } from './analysisLabel'
 
 afterEach(() => {
@@ -273,5 +273,61 @@ describe('App polling', () => {
     const calls = apiMocks.apiFetch.mock.calls.map((c) => (c[0] as { path: string }).path)
     expect(calls).toContain('/api/thoughts/analysis-status?ids=1')
     expect(calls).toContain('/api/thoughts/1')
+  })
+})
+
+describe('timezone helpers', () => {
+  it('tzOffsetMinutesForLocalDateKey uses the offset for the specific local date when parsable', () => {
+    // Stub getTimezoneOffset to return a special value only for the target date.
+    const target = new Date(2024, 2, 10, 0, 0, 0)
+    const targetTime = target.getTime()
+
+    const spy = vi.spyOn(Date.prototype, 'getTimezoneOffset').mockImplementation(function (this: Date) {
+      // Use getTime() so we can distinguish the specific calendar date we care about.
+      return this.getTime() === targetTime ? 480 : -60
+    })
+
+    const offset = tzOffsetMinutesForLocalDateKey('2024-03-10')
+    expect(offset).toBe(480)
+    expect(spy).toHaveBeenCalled()
+
+    spy.mockRestore()
+  })
+
+  it('tzOffsetMinutesForLocalDateKey falls back to current offset when the date is invalid', () => {
+    const fallback = 90
+    const spy = vi.spyOn(Date.prototype, 'getTimezoneOffset').mockReturnValue(fallback)
+
+    const offset = tzOffsetMinutesForLocalDateKey('not-a-date')
+    expect(offset).toBe(fallback)
+    expect(spy).toHaveBeenCalled()
+
+    spy.mockRestore()
+  })
+
+  it('tzOffsetMinutesForLocalMonthKey uses the offset for the first day of the given month when parsable', () => {
+    const target = new Date(2025, 5, 1, 0, 0, 0)
+    const targetTime = target.getTime()
+
+    const spy = vi.spyOn(Date.prototype, 'getTimezoneOffset').mockImplementation(function (this: Date) {
+      return this.getTime() === targetTime ? -300 : 0
+    })
+
+    const offset = tzOffsetMinutesForLocalMonthKey('2025-06')
+    expect(offset).toBe(-300)
+    expect(spy).toHaveBeenCalled()
+
+    spy.mockRestore()
+  })
+
+  it('tzOffsetMinutesForLocalMonthKey falls back to current offset when the month key is invalid', () => {
+    const fallback = -15
+    const spy = vi.spyOn(Date.prototype, 'getTimezoneOffset').mockReturnValue(fallback)
+
+    const offset = tzOffsetMinutesForLocalMonthKey('bogus')
+    expect(offset).toBe(fallback)
+    expect(spy).toHaveBeenCalled()
+
+    spy.mockRestore()
   })
 })

@@ -35,6 +35,9 @@ import {
 } from './tagger'
 import { buildMoodSystemPrompt, buildMoodUserPrompt, type MoodAiResult } from './mood'
 
+// NOTE: The API exposes timestamps as Unix epoch seconds in UTC (matching the DB schema).
+// The frontend is responsible for converting these numeric seconds to local time for display.
+
 type ApiErrorBody = {
   error: string
 }
@@ -102,7 +105,7 @@ function parseTagsParam(tags: string | null): string[] {
     .filter((t) => t.length > 0)
 }
 
-function parseTzOffsetMinutesParam(raw: string | null): number {
+export function parseTzOffsetMinutesParam(raw: string | null): number {
   const n = Number(raw ?? '0')
   if (!Number.isFinite(n) || !Number.isInteger(n)) return 0
   // Typical JS timezone offsets are within [-14h, +14h].
@@ -133,7 +136,7 @@ function parseIsoMonthParam(raw: string | null): { y: number; m: number; iso: st
   return { y, m: mm, iso: raw }
 }
 
-function utcRangeForLocalDay(opts: { y: number; m: number; d: number; tzOffsetMinutes: number }): {
+export function utcRangeForLocalDay(opts: { y: number; m: number; d: number; tzOffsetMinutes: number }): {
   start: number
   endExclusive: number
 } {
@@ -144,7 +147,7 @@ function utcRangeForLocalDay(opts: { y: number; m: number; d: number; tzOffsetMi
   return { start, endExclusive: start + 24 * 60 * 60 }
 }
 
-function utcRangeForLocalMonth(opts: { y: number; m: number; tzOffsetMinutes: number }): {
+export function utcRangeForLocalMonth(opts: { y: number; m: number; tzOffsetMinutes: number }): {
   start: number
   endExclusive: number
 } {

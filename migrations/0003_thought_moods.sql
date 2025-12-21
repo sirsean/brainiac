@@ -1,5 +1,6 @@
 -- D1 migration: add thought_moods table for per-thought mood analysis
 -- Note: D1 runs on SQLite.
+-- All *_at columns below are Unix epoch seconds in UTC (via sqlite unixepoch()).
 
 PRAGMA foreign_keys = ON;
 

@@ -3,7 +3,13 @@
 import { describe, expect, it } from 'vitest'
 
 import type { AnalysisJobStatusSummaryRow } from './db'
-import { parseIdsParam, summarizeJobs } from './index'
+import {
+  parseIdsParam,
+  summarizeJobs,
+  parseTzOffsetMinutesParam,
+  utcRangeForLocalDay,
+  utcRangeForLocalMonth,
+} from './index'
 
 describe('summarizeJobs', () => {
   it('returns null when row is missing or total <= 0', () => {
@@ -112,5 +118,79 @@ describe('parseIdsParam', () => {
 
   it('does not deduplicate ids', () => {
     expect(parseIdsParam('1,1,2')).toEqual([1, 1, 2])
+  })
+})
+
+describe('parseTzOffsetMinutesParam', () => {
+  it('returns 0 for null/invalid inputs', () => {
+    expect(parseTzOffsetMinutesParam(null)).toBe(0)
+    expect(parseTzOffsetMinutesParam('')).toBe(0)
+    expect(parseTzOffsetMinutesParam('foo')).toBe(0)
+    expect(parseTzOffsetMinutesParam('3.14')).toBe(0)
+  })
+
+  it('parses integer minute offsets and clamps to [-14h, +14h]', () => {
+    expect(parseTzOffsetMinutesParam('0')).toBe(0)
+    expect(parseTzOffsetMinutesParam('480')).toBe(480)
+    expect(parseTzOffsetMinutesParam('-300')).toBe(-300)
+
+    // Above +14h and below -14h are clamped.
+    expect(parseTzOffsetMinutesParam('9000')).toBe(14 * 60)
+    expect(parseTzOffsetMinutesParam('-9000')).toBe(-14 * 60)
+  })
+})
+
+describe('utcRangeForLocalDay and utcRangeForLocalMonth', () => {
+  it('computes a 24h UTC range for a given local day and offset', () => {
+    const base = Date.UTC(2024, 0, 15, 0, 0, 0)
+
+    // UTC timezone.
+    const { start: startUtc, endExclusive: endUtc } = utcRangeForLocalDay({
+      y: 2024,
+      m: 1,
+      d: 15,
+      tzOffsetMinutes: 0,
+    })
+    expect(startUtc).toBe(Math.floor(base / 1000))
+    expect(endUtc - startUtc).toBe(24 * 60 * 60)
+
+    // PST-style offset (+480 minutes = UTC-8).
+    const { start: startPst } = utcRangeForLocalDay({
+      y: 2024,
+      m: 1,
+      d: 15,
+      tzOffsetMinutes: 480,
+    })
+    expect(startPst).toBe(Math.floor((base + 480 * 60 * 1000) / 1000))
+
+    // UTC+2-style offset (-120 minutes).
+    const { start: startUtcPlus2 } = utcRangeForLocalDay({
+      y: 2024,
+      m: 1,
+      d: 15,
+      tzOffsetMinutes: -120,
+    })
+    expect(startUtcPlus2).toBe(Math.floor((base - 120 * 60 * 1000) / 1000))
+  })
+
+  it('computes a month-long UTC range for a given local month and offset', () => {
+    const janStart = Date.UTC(2024, 0, 1, 0, 0, 0)
+    const febStart = Date.UTC(2024, 1, 1, 0, 0, 0)
+
+    const { start: startUtc, endExclusive: endUtc } = utcRangeForLocalMonth({
+      y: 2024,
+      m: 1,
+      tzOffsetMinutes: 0,
+    })
+    expect(startUtc).toBe(Math.floor(janStart / 1000))
+    expect(endUtc).toBe(Math.floor(febStart / 1000))
+
+    const { start: startWithOffset, endExclusive: endWithOffset } = utcRangeForLocalMonth({
+      y: 2024,
+      m: 1,
+      tzOffsetMinutes: 180,
+    })
+    expect(startWithOffset).toBe(Math.floor((janStart + 180 * 60 * 1000) / 1000))
+    expect(endWithOffset).toBe(Math.floor((febStart + 180 * 60 * 1000) / 1000))
   })
 })
