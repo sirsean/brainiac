@@ -318,7 +318,7 @@ function App() {
       })
       setNewThought('')
       setThoughtsCursor(null)
-      await Promise.all([refreshTags(), refreshThoughts(true)])
+      await Promise.all([refreshTags(), refreshThoughts(true), refreshDayCounts()])
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
