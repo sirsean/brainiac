@@ -425,9 +425,12 @@ function App() {
             >
               ◤◢
             </button>
-            <h1 className="text-lg tracking-[0.25em] uppercase text-amber-300 drop-shadow-[0_0_10px_rgba(250,204,21,0.7)]">
-              brainiac
-            </h1>
+            <img
+              src="/apple-touch-icon.png"
+              alt="Brainiac logo"
+              className="h-8 w-8 rounded-md border border-amber-400/70 shadow-[0_0_18px_rgba(250,204,21,0.6)]"
+            />
+            <span className="sr-only">brainiac</span>
           </div>
           <div className="flex items-center gap-3 text-sm">
             {loading ? (
@@ -537,6 +540,11 @@ function App() {
 
         {!loading && !user ? (
           <div className="mt-12 flex flex-1 flex-col items-center justify-center text-center text-amber-200/80">
+            <img
+              src="/android-chrome-512x512.png"
+              alt="Brainiac neural core"
+              className="mb-6 h-32 w-32 rounded-2xl border border-amber-400/80 bg-black/80 object-contain shadow-[0_0_45px_rgba(250,204,21,0.8)]"
+            />
             <div className="mb-3 text-xs uppercase tracking-[0.35em] text-amber-400/80">
               // Neural capture offline
             </div>

@@ -90,7 +90,7 @@ export function Calendar(props: CalendarProps) {
             <button
               key={c.date}
               type="button"
-              onClick={() => onSelectDate(c.date)}
+              onClick={() => onSelectDate(c.date!)}
               className={
                 'flex min-h-[2.25rem] flex-col items-center justify-start rounded-md border px-1 py-1 text-xs transition-colors ' +
                 (isSelected
