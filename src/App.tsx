@@ -56,6 +56,8 @@ function App() {
   const [dayCounts, setDayCounts] = useState<Record<string, number>>({})
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [navOpen, setNavOpen] = useState(false) // mounted
+  const [navVisible, setNavVisible] = useState(false) // animated open/close
 
   const tagQuery = useMemo(() => selectedTags.join(','), [selectedTags])
 
@@ -394,153 +396,323 @@ function App() {
     }
   }
 
+  // Handle slide-in/out animation for the mobile sidebar.
+  useEffect(() => {
+    if (navVisible) {
+      // Ensure panel is mounted, then let CSS handle sliding in.
+      setNavOpen(true)
+      return
+    }
+    if (!navOpen) return
+    // When hiding, wait for the transition to finish before unmounting.
+    const timeout = window.setTimeout(() => setNavOpen(false), 220)
+    return () => window.clearTimeout(timeout)
+  }, [navVisible, navOpen])
+
   return (
-    <div className='app'>
-      <header className='topbar'>
-        <h1>brainiac</h1>
-        <div className='auth'>
-          {loading ? (
-            <span>Loading…</span>
-          ) : user ? (
-            <>
-              <span className='user'>{user.displayName ?? user.email ?? user.uid}</span>
-              <button onClick={() => void signOut()} aria-label='sign out'>
-                Sign out
-              </button>
-            </>
-          ) : (
-            <button onClick={() => void signIn()} aria-label='sign in'>
-              Sign in with Google
+    <div className="min-h-screen bg-black text-amber-100 font-mono flex flex-col">
+      <header className="border-b border-amber-400/40 bg-black/80 backdrop-blur sticky top-0 z-20">
+        <div className="mx-auto flex max-w-5xl items-center justify-between gap-4 px-4 py-3">
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => {
+                setNavOpen(true)
+                setTimeout(() => setNavVisible(true), 0)
+              }}
+              className="inline-flex h-8 w-8 items-center justify-center rounded border border-amber-400/60 bg-black/70 text-[0.65rem] uppercase tracking-[0.2em] text-amber-200 shadow-[0_0_12px_rgba(250,204,21,0.4)] hover:border-amber-300 hover:bg-amber-500/10 transition-colors md:hidden"
+              aria-label="Open browse and tags panel"
+            >
+              ◤◢
             </button>
-          )}
+            <h1 className="text-lg tracking-[0.25em] uppercase text-amber-300 drop-shadow-[0_0_10px_rgba(250,204,21,0.7)]">
+              brainiac
+            </h1>
+          </div>
+          <div className="flex items-center gap-3 text-sm">
+            {loading ? (
+              <span className="text-amber-200/70">Booting…</span>
+            ) : user ? (
+              <>
+                <span className="max-w-[30ch] truncate text-amber-100/80">
+                  {user.displayName ?? user.email ?? user.uid}
+                </span>
+                <button
+                  onClick={() => void signOut()}
+                  aria-label="sign out"
+                  className="rounded border border-amber-400/60 bg-black/60 px-3 py-1 text-xs uppercase tracking-wide text-amber-200 hover:border-amber-300 hover:bg-amber-400/10 transition-colors"
+                >
+                  Sign out
+                </button>
+              </>
+            ) : (
+              <button
+                onClick={() => void signIn()}
+                aria-label="sign in"
+                className="rounded border border-amber-400/80 bg-amber-500/10 px-3 py-1 text-xs uppercase tracking-wide text-amber-200 shadow-[0_0_20px_rgba(245,158,11,0.5)] hover:bg-amber-500/20 hover:border-amber-300 transition-colors"
+              >
+                Sign in with Google
+              </button>
+            )}
+          </div>
         </div>
       </header>
 
-      {error ? <div className='error'>Error: {error}</div> : null}
-
-      {!loading && !user ? (
-        <div className='empty'>Sign in to start capturing thoughts.</div>
-      ) : null}
-
-      {!loading && user ? (
-        <main className='layout'>
-          <aside className='sidebar'>
-            <h2>Browse</h2>
-
-            <Calendar
-              month={calendarMonth}
-              selectedDate={selectedDate}
-              countsByDay={dayCounts}
-              onChangeMonth={changeCalendarMonth}
-              onSelectDate={selectDate}
-            />
-
-            <h2>Tags</h2>
-            <div className='tagList'>
-              {tags.length === 0 ? <div className='muted'>No tags yet.</div> : null}
-              {tags.map((t) => (
-                <button
-                  key={t.id}
-                  className={selectedTags.includes(t.name) ? 'tag active' : 'tag'}
-                  onClick={() => toggleTag(t.name)}
-                  type='button'
-                >
-                  <span>{t.name}</span>
-                  <span className='tagMeta'>{t.thought_count}</span>
-                </button>
-              ))}
-            </div>
-          </aside>
-
-          <section className='content'>
-            <div className='composer'>
-              <textarea
-                value={newThought}
-                onChange={(e) => setNewThought(e.target.value)}
-                onKeyDown={(e) => {
-                  // Submit with Ctrl+Enter (or Cmd+Enter on macOS), keep Enter for newlines.
-                  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-                    e.preventDefault()
-                    void onCreateThought()
-                  }
-                }}
-                placeholder='Write a thought…'
-                rows={8}
-              />
-              <div className='composerActions'>
-                <button onClick={() => void onCreateThought()} disabled={busy} aria-label='add thought'>
-                  Add
-                </button>
-                <button
-                  onClick={() =>
-                    void (async () => {
-                      setError(null)
-                      try {
-                        await Promise.all([refreshTags(), refreshThoughts(true)])
-                      } catch (e) {
-                        setError(e instanceof Error ? e.message : String(e))
-                      }
-                    })()
-                  }
-                  disabled={busy}
-                  aria-label='refresh'
-                >
-                  Refresh
-                </button>
-              </div>
-            </div>
-
-            <div className='filters'>
-              <div>
-                {selectedDate ? (
-                  <>
-                    <span className='chip'>Date: {selectedDate}</span>
-                    <button onClick={() => setSelectedDate(null)} type='button'>
-                      Clear date
-                    </button>
-                  </>
-                ) : (
-                  <span className='muted'>Newest first</span>
-                )}
-              </div>
-
-              <div>
-                {selectedTags.length > 0 ? (
-                  <>
-                    Filtering by: {selectedTags.map((t) => (
-                      <span key={t} className='chip'>
-                        {t}
-                      </span>
-                    ))}
-                    <button onClick={() => setSelectedTags([])} type='button'>
-                      Clear tags
-                    </button>
-                  </>
-                ) : null}
-              </div>
-            </div>
-
-            <div className='thoughtList'>
-              {thoughts.length === 0 ? <div className='muted'>No thoughts yet.</div> : null}
-              {(selectedDate ? thoughts : thoughts.slice(0, 5)).map((t) => (
-                <ThoughtCard key={t.id} thought={t} onDelete={onDeleteThought} onEdit={onEditThought} busy={busy} />
-              ))}
-            </div>
-
-            {selectedDate && thoughtsCursor ? (
-              <button onClick={() => void refreshThoughts(false)} disabled={busy} aria-label='load more' type='button'>
-                Load more
+      {/* Mobile slide-in panel for calendar + tags */}
+      {navOpen && (
+        <div
+          className={
+            'fixed inset-0 z-30 flex justify-end backdrop-blur-sm md:hidden transition-colors duration-200 ' +
+            (navVisible ? 'bg-black/80' : 'bg-black/0')
+          }
+          onClick={() => setNavVisible(false)}
+        >
+          <div
+            className={
+              'relative h-full w-80 max-w-full border-l border-amber-400/40 bg-black/95 p-4 shadow-[0_0_40px_rgba(250,204,21,0.5)] transform transition-transform duration-200 ease-out ' +
+              (navVisible ? 'translate-x-0' : 'translate-x-full')
+            }
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-3 flex items-center justify-between text-[0.7rem] uppercase tracking-[0.25em] text-amber-300/80">
+              <span>Browse</span>
+              <button
+                type="button"
+                onClick={() => setNavVisible(false)}
+                className="rounded border border-amber-400/60 bg-black/60 px-2 py-0.5 text-[0.65rem] text-amber-200 hover:border-amber-300 hover:bg-amber-500/10"
+                aria-label="Close browse and tags panel"
+              >
+                ✕
               </button>
-            ) : null}
-          </section>
-        </main>
-      ) : null}
+            </div>
 
-      <footer className='footer'>
-        <small className='muted'>
-          Tips: tags are generated by AI (for now). Edited thoughts will be re-tagged.
-        </small>
-      </footer>
+            <div className="space-y-4 text-xs">
+              <div>
+                <h2 className="mb-2 text-[0.65rem] font-semibold uppercase tracking-[0.25em] text-amber-300/80">
+                  Calendar
+                </h2>
+                <Calendar
+                  month={calendarMonth}
+                  selectedDate={selectedDate}
+                  countsByDay={dayCounts}
+                  onChangeMonth={changeCalendarMonth}
+                  onSelectDate={selectDate}
+                />
+              </div>
+
+              <div>
+                <h2 className="mb-2 text-[0.65rem] font-semibold uppercase tracking-[0.25em] text-amber-300/80">
+                  Tags
+                </h2>
+                <div className="flex max-h-[260px] flex-col gap-1 overflow-y-auto pr-1">
+                  {tags.length === 0 ? <div className="muted">No tags yet.</div> : null}
+                  {tags.map((t) => {
+                    const active = selectedTags.includes(t.name)
+                    return (
+                      <button
+                        key={t.id}
+                        type="button"
+                        onClick={() => toggleTag(t.name)}
+                        className={
+                          (active
+                            ? 'border-amber-400/80 bg-amber-500/10 text-amber-100 shadow-[0_0_18px_rgba(245,158,11,0.6)] '
+                            : 'border-amber-400/20 bg-black/40 text-amber-200/80 hover:border-amber-300/60 hover:bg-amber-500/10 ') +
+                          'flex items-center justify-between gap-2 rounded-md border px-2 py-1 text-[0.7rem] transition-colors'
+                        }
+                      >
+                        <span className="truncate">{t.name}</span>
+                        <span className="text-[0.6rem] text-amber-300/80">{t.thought_count}</span>
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-3 px-4 py-4">
+        {error ? <div className="error">Error: {error}</div> : null}
+
+        {!loading && !user ? (
+          <div className="mt-12 flex flex-1 flex-col items-center justify-center text-center text-amber-200/80">
+            <div className="mb-3 text-xs uppercase tracking-[0.35em] text-amber-400/80">
+              // Neural capture offline
+            </div>
+            <p className="max-w-md text-sm text-amber-100/80">
+              Jack in with Google to start streaming your thoughts into the brainiac cortex.
+            </p>
+          </div>
+        ) : null}
+
+        {!loading && user ? (
+          <main className="grid flex-1 gap-4 md:grid-cols-[minmax(0,1fr)_260px]">
+            <section className="flex flex-col gap-3">
+              <div className="rounded-xl border border-amber-400/30 bg-gradient-to-br from-black/90 via-zinc-950/90 to-black/80 p-3 shadow-[0_0_45px_rgba(250,204,21,0.12)]">
+                <div className="mb-2 flex items-center justify-between text-[0.7rem] uppercase tracking-[0.25em] text-amber-300/80">
+                  <span>Thought input</span>
+                  <span className="text-amber-400/70">Ctrl+Enter to deploy</span>
+                </div>
+                <textarea
+                  value={newThought}
+                  onChange={(e) => setNewThought(e.target.value)}
+                  onKeyDown={(e) => {
+                    // Submit with Ctrl+Enter (or Cmd+Enter on macOS), keep Enter for newlines.
+                    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                      e.preventDefault()
+                      void onCreateThought()
+                    }
+                  }}
+                  placeholder="Write a thought…"
+                  rows={8}
+                  className="w-full min-h-[10rem] resize-y rounded-lg border border-amber-400/30 bg-black/70 px-3 py-2 text-sm text-amber-100 placeholder:text-amber-300/40 shadow-inner shadow-amber-500/10 focus:outline-none focus:ring-2 focus:ring-amber-400/70 focus:border-amber-300/80"
+                />
+                <div className="mt-2 flex flex-wrap gap-2 text-xs">
+                  <button
+                    onClick={() => void onCreateThought()}
+                    disabled={busy}
+                    aria-label="add thought"
+                    className="rounded border border-amber-400/80 bg-amber-500/20 px-3 py-1 text-[0.7rem] uppercase tracking-[0.2em] text-amber-100 shadow-[0_0_20px_rgba(245,158,11,0.7)] transition-colors hover:bg-amber-500/30 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    Add
+                  </button>
+                  <button
+                    onClick={() =>
+                      void (async () => {
+                        setError(null)
+                        try {
+                          await Promise.all([refreshTags(), refreshThoughts(true)])
+                        } catch (e) {
+                          setError(e instanceof Error ? e.message : String(e))
+                        }
+                      })()
+                    }
+                    disabled={busy}
+                    aria-label="refresh"
+                    className="rounded border border-amber-400/40 bg-black/40 px-3 py-1 text-[0.7rem] uppercase tracking-[0.2em] text-amber-200 hover:border-amber-300/70 hover:bg-amber-500/10 transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    Refresh
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                <div className="flex flex-wrap items-center gap-2">
+                  {selectedDate ? (
+                    <>
+                      <span className="chip bg-amber-500/10 text-amber-100 border-amber-400/70">
+                        Date: {selectedDate}
+                      </span>
+                      <button
+                        onClick={() => setSelectedDate(null)}
+                        type="button"
+                        className="text-amber-300/80 underline-offset-4 hover:underline"
+                      >
+                        Clear date
+                      </button>
+                    </>
+                  ) : (
+                    <span className="muted text-[0.7rem]">Newest first</span>
+                  )}
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  {selectedTags.length > 0 ? (
+                    <>
+                      <span className="text-amber-300/80">Filtering by:</span>
+                      {selectedTags.map((t) => (
+                        <span
+                          key={t}
+                          className="chip border-amber-400/60 bg-amber-500/10 text-[0.7rem] uppercase tracking-[0.15em] text-amber-100"
+                        >
+                          {t}
+                        </span>
+                      ))}
+                      <button
+                        onClick={() => setSelectedTags([])}
+                        type="button"
+                        className="text-amber-300/80 underline-offset-4 hover:underline"
+                      >
+                        Clear tags
+                      </button>
+                    </>
+                  ) : null}
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-2">
+                {thoughts.length === 0 ? <div className="muted text-sm">No thoughts yet.</div> : null}
+                {(selectedDate ? thoughts : thoughts.slice(0, 5)).map((t) => (
+                  <ThoughtCard key={t.id} thought={t} onDelete={onDeleteThought} onEdit={onEditThought} busy={busy} />
+                ))}
+              </div>
+
+              {selectedDate && thoughtsCursor ? (
+                <button
+                  onClick={() => void refreshThoughts(false)}
+                  disabled={busy}
+                  aria-label="load more"
+                  type="button"
+                  className="mt-2 self-start rounded border border-amber-400/50 bg-black/40 px-3 py-1 text-[0.7rem] uppercase tracking-[0.2em] text-amber-200 hover:border-amber-300/80 hover:bg-amber-500/10 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Load more
+                </button>
+              ) : null}
+            </section>
+
+            {/* Desktop sidebar (hidden on mobile, lives in slide-out there) */}
+            <aside className="hidden space-y-4 rounded-xl border border-amber-400/30 bg-gradient-to-b from-black/80 via-zinc-950/90 to-black/80 p-3 shadow-[0_0_40px_rgba(250,204,21,0.08)] md:block">
+              <div>
+                <h2 className="mb-2 text-xs font-semibold uppercase tracking-[0.25em] text-amber-300/80">
+                  Browse
+                </h2>
+                <Calendar
+                  month={calendarMonth}
+                  selectedDate={selectedDate}
+                  countsByDay={dayCounts}
+                  onChangeMonth={changeCalendarMonth}
+                  onSelectDate={selectDate}
+                />
+              </div>
+
+              <div>
+                <h2 className="mb-2 text-xs font-semibold uppercase tracking-[0.25em] text-amber-300/80">
+                  Tags
+                </h2>
+                <div className="flex max-h-[260px] flex-col gap-1 overflow-y-auto pr-1">
+                  {tags.length === 0 ? <div className="muted">No tags yet.</div> : null}
+                  {tags.map((t) => {
+                    const active = selectedTags.includes(t.name)
+                    return (
+                      <button
+                        key={t.id}
+                        type="button"
+                        onClick={() => toggleTag(t.name)}
+                        className={
+                          (active
+                            ? 'border-amber-400/80 bg-amber-500/10 text-amber-100 shadow-[0_0_18px_rgba(245,158,11,0.6)] '
+                            : 'border-amber-400/20 bg-black/40 text-amber-200/80 hover:border-amber-300/60 hover:bg-amber-500/10 ') +
+                          'flex items-center justify-between gap-2 rounded-md border px-2 py-1 text-xs transition-colors'
+                        }
+                      >
+                        <span className="truncate">{t.name}</span>
+                        <span className="text-[0.65rem] text-amber-300/80">{t.thought_count}</span>
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            </aside>
+          </main>
+        ) : null}
+
+        <footer className="mt-4 border-t border-amber-400/20 pt-3 text-[0.65rem] text-amber-200/60">
+          <small>
+            Tips: tags are generated by AI (for now). Edited thoughts will be re-tagged.
+          </small>
+        </footer>
+      </div>
     </div>
   )
 }
@@ -560,33 +732,46 @@ function ThoughtCard(props: {
   const status = analysisLabel(thought.analysis)
 
   return (
-    <article className='thought'>
-      <div className='thoughtMeta'>
-        <span className='muted'>#{thought.id}</span>
-        <span className='muted'>{formatTs(thought.created_at)}</span>
-        {thought.updated_at ? <span className='muted'>(edited {formatTs(thought.updated_at)})</span> : null}
+    <article className="rounded-xl border border-amber-400/25 bg-black/70 p-3 shadow-[0_0_32px_rgba(250,204,21,0.08)]">
+      <div className="mb-2 flex flex-wrap items-center gap-3 text-[0.7rem] text-amber-200/75">
+        <span className="text-amber-400/80">#{thought.id}</span>
+        <span className="muted">{formatTs(thought.created_at)}</span>
+        {thought.updated_at ? <span className="muted">(edited {formatTs(thought.updated_at)})</span> : null}
         {status ? (
-          <span className={`chip ${status.className}`} title={status.title}>
+          <span
+            className={`chip status ${status.className} ml-auto border px-2 py-0.5 text-[0.65rem] uppercase tracking-[0.18em] text-amber-100`}
+            title={status.title}
+          >
             {status.text}
           </span>
         ) : null}
       </div>
 
       {editing ? (
-        <textarea value={draft} onChange={(e) => setDraft(e.target.value)} rows={3} />
+        <textarea
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          rows={3}
+          className="w-full resize-y rounded-md border border-amber-400/40 bg-black/80 px-3 py-2 text-sm text-amber-100 shadow-inner focus:outline-none focus:ring-2 focus:ring-amber-400/70"
+        />
       ) : (
-        <div className='thoughtBody'>{thought.body}</div>
+        <div className="whitespace-pre-wrap text-sm leading-relaxed text-amber-50">
+          {thought.body}
+        </div>
       )}
 
-      <div className='thoughtTags'>
+      <div className="mt-2 flex flex-wrap gap-1">
         {(thought.tags ?? []).map((tag) => (
-          <span key={tag} className='chip'>
+          <span
+            key={tag}
+            className="chip border border-amber-400/40 bg-amber-500/10 px-2 py-0.5 text-[0.65rem] uppercase tracking-[0.15em] text-amber-100"
+          >
             {tag}
           </span>
         ))}
       </div>
 
-      <div className='thoughtActions'>
+      <div className="mt-3 flex flex-wrap gap-2 text-[0.7rem]">
         {editing ? (
           <>
             <button
@@ -597,20 +782,36 @@ function ThoughtCard(props: {
                 })()
               }
               disabled={busy}
-              type='button'
+              type="button"
+              className="rounded border border-emerald-400/80 bg-emerald-500/10 px-3 py-1 uppercase tracking-[0.18em] text-emerald-100 hover:bg-emerald-500/20 disabled:cursor-not-allowed disabled:opacity-40"
             >
               Save
             </button>
-            <button onClick={() => setEditing(false)} disabled={busy} type='button'>
+            <button
+              onClick={() => setEditing(false)}
+              disabled={busy}
+              type="button"
+              className="rounded border border-amber-400/40 bg-black/40 px-3 py-1 uppercase tracking-[0.18em] text-amber-200 hover:border-amber-300/70 hover:bg-amber-500/10 disabled:cursor-not-allowed disabled:opacity-40"
+            >
               Cancel
             </button>
           </>
         ) : (
           <>
-            <button onClick={() => setEditing(true)} disabled={busy} type='button'>
+            <button
+              onClick={() => setEditing(true)}
+              disabled={busy}
+              type="button"
+              className="rounded border border-amber-400/60 bg-black/40 px-3 py-1 uppercase tracking-[0.18em] text-amber-200 hover:border-amber-300/90 hover:bg-amber-500/10 disabled:cursor-not-allowed disabled:opacity-40"
+            >
               Edit
             </button>
-            <button onClick={() => void onDelete(thought.id)} disabled={busy} type='button'>
+            <button
+              onClick={() => void onDelete(thought.id)}
+              disabled={busy}
+              type="button"
+              className="rounded border border-red-500/70 bg-red-500/10 px-3 py-1 uppercase tracking-[0.18em] text-red-100 hover:bg-red-500/20 disabled:cursor-not-allowed disabled:opacity-40"
+            >
               Delete
             </button>
           </>

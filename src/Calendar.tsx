@@ -48,45 +48,77 @@ export function Calendar(props: CalendarProps) {
   }
 
   return (
-    <div className='calendar'>
-      <div className='calendarHeader'>
-        <button type='button' onClick={() => onChangeMonth(-1)} aria-label='previous month'>
+    <div className="w-full rounded-lg border border-amber-400/30 bg-black/60 p-2 text-amber-100 shadow-[0_0_24px_rgba(250,204,21,0.12)]">
+      <div className="mb-2 grid grid-cols-[1.5rem_1fr_1.5rem] items-center gap-1 text-xs text-amber-200/80">
+        <button
+          type="button"
+          onClick={() => onChangeMonth(-1)}
+          aria-label="previous month"
+          className="inline-flex h-6 w-6 items-center justify-center rounded border border-amber-400/40 bg-black/60 text-amber-200 hover:border-amber-300/70 hover:bg-amber-500/10"
+        >
           ‹
         </button>
-        <div className='calendarTitle'>{monthLabel(month)}</div>
-        <button type='button' onClick={() => onChangeMonth(1)} aria-label='next month'>
+        <div className="text-center text-[0.7rem] font-medium uppercase tracking-[0.18em] text-amber-300/80">
+          {monthLabel(month)}
+        </div>
+        <button
+          type="button"
+          onClick={() => onChangeMonth(1)}
+          aria-label="next month"
+          className="inline-flex h-6 w-6 items-center justify-center rounded border border-amber-400/40 bg-black/60 text-amber-200 hover:border-amber-300/70 hover:bg-amber-500/10"
+        >
           ›
         </button>
       </div>
 
-      <div className='calendarGrid'>
+      <div className="grid grid-cols-7 gap-1">
         {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((d, idx) => (
-          <div key={`${d}-${idx}`} className='calendarDow'>
+          <div key={`${d}-${idx}`} className="pb-1 text-center text-[0.6rem] text-amber-300/70">
             {d}
           </div>
         ))}
 
         {cells.map((c, idx) => {
           if (!c.date || !c.dayNum) {
-            return <div key={idx} className='calendarCell empty' />
+            return <div key={idx} className="min-h-[2.25rem] rounded-md border border-transparent" />
           }
 
           const count = countsByDay[c.date] ?? 0
           const isSelected = selectedDate === c.date
-          const className = isSelected ? 'calendarCell day selected' : 'calendarCell day'
 
           return (
-            <button key={c.date} type='button' className={className} onClick={() => onSelectDate(c.date)}>
-              <span className='calendarDayNum'>{c.dayNum}</span>
-              {count > 0 ? <span className='calendarCount'>{count}</span> : null}
+            <button
+              key={c.date}
+              type="button"
+              onClick={() => onSelectDate(c.date)}
+              className={
+                'flex min-h-[2.25rem] flex-col items-center justify-start rounded-md border px-1 py-1 text-xs transition-colors ' +
+                (isSelected
+                  ? 'border-amber-400/90 bg-amber-500/20 text-amber-50 shadow-[0_0_18px_rgba(245,158,11,0.7)]'
+                  : 'border-amber-400/20 bg-black/40 text-amber-100 hover:border-amber-300/70 hover:bg-amber-500/10')
+              }
+            >
+              <span className="text-[0.7rem] leading-none">{c.dayNum}</span>
+              <span
+                className={
+                  'mt-1 rounded-full border border-amber-400/80 px-1 text-[0.55rem] text-amber-100 min-w-[1.5rem] text-center ' +
+                  (count > 0 ? '' : 'opacity-0')
+                }
+              >
+                {count || 0}
+              </span>
             </button>
           )
         })}
       </div>
 
       {selectedDate ? (
-        <div className='calendarFooter'>
-          <button type='button' onClick={() => onSelectDate('')}>
+        <div className="mt-2">
+          <button
+            type="button"
+            onClick={() => onSelectDate('')}
+            className="w-full rounded border border-amber-400/40 bg-black/40 px-2 py-1 text-[0.65rem] uppercase tracking-[0.18em] text-amber-200 hover:border-amber-300/70 hover:bg-amber-500/10"
+          >
             Clear date
           </button>
         </div>
