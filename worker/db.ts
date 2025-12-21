@@ -44,6 +44,17 @@ export type AnalysisJobStatusSummaryRow = {
   last_updated_at: number
 }
 
+export type ThoughtMoodRow = {
+  id: number
+  thought_id: number
+  uid: string
+  mood_score: number
+  explanation: string
+  model: string | null
+  created_at: number
+  updated_at: number
+}
+
 export async function ensureUser(env: Env, auth: AuthContext) {
   await env.DB.prepare(
     `INSERT INTO users(uid, email, display_name, photo_url, last_seen_at)
@@ -334,7 +345,7 @@ export async function listThoughtsInCreatedAtRange(env: Env, opts: {
   return results
 }
 
-type DayCountRow = { day: string; count: number }
+type DayCountRow = { day: string; count: number; avg_mood_score: number | null }
 
 export async function listThoughtCountsByLocalDay(env: Env, opts: {
   uid: string
@@ -348,8 +359,12 @@ export async function listThoughtCountsByLocalDay(env: Env, opts: {
   // SQLite date() returns YYYY-MM-DD.
   if (!tags || tags.length === 0) {
     const { results } = await env.DB.prepare(
-      `SELECT date(th.created_at - ?, 'unixepoch') AS day, COUNT(*) AS count
+      `SELECT
+         date(th.created_at - ?, 'unixepoch') AS day,
+         COUNT(*) AS count,
+         AVG(tm.mood_score) AS avg_mood_score
        FROM thoughts th
+       LEFT JOIN thought_moods tm ON tm.thought_id = th.id AND tm.uid = th.uid
        WHERE th.uid = ?
          AND th.deleted_at IS NULL
          AND th.created_at >= ?
@@ -381,12 +396,25 @@ export async function listThoughtCountsByLocalDay(env: Env, opts: {
        GROUP BY th.id
        HAVING COUNT(DISTINCT tg.name) = ?
      )
-     SELECT date(created_at - ?, 'unixepoch') AS day, COUNT(*) AS count
-     FROM filtered
+     SELECT
+       date(f.created_at - ?, 'unixepoch') AS day,
+       COUNT(*) AS count,
+       AVG(tm.mood_score) AS avg_mood_score
+     FROM filtered f
+     LEFT JOIN thought_moods tm ON tm.thought_id = f.id AND tm.uid = ?
      GROUP BY day
      ORDER BY day ASC`
 
-  const bindings: unknown[] = [uid, startCreatedAt, endCreatedAtExclusive, uid, ...tags, havingCount, tzOffsetSeconds]
+  const bindings: unknown[] = [
+    uid,
+    startCreatedAt,
+    endCreatedAtExclusive,
+    uid,
+    ...tags,
+    havingCount,
+    tzOffsetSeconds,
+    uid,
+  ]
 
   const { results } = await env.DB.prepare(sql).bind(...bindings).all<DayCountRow>()
   return results
@@ -600,4 +628,67 @@ export async function listRecentUserTagNames(env: Env, uid: string, limit: numbe
     .all<{ name: string }>()
 
   return results.map((r) => r.name)
+}
+
+export async function upsertThoughtMood(env: Env, opts: {
+  uid: string
+  thoughtId: number
+  moodScore: number
+  explanation: string
+  model: string | null
+}): Promise<void> {
+  const { uid, thoughtId, moodScore, explanation, model } = opts
+
+  await env.DB.prepare(
+    `INSERT INTO thought_moods (thought_id, uid, mood_score, explanation, model, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, unixepoch(), unixepoch())
+     ON CONFLICT(thought_id) DO UPDATE SET
+       uid = excluded.uid,
+       mood_score = excluded.mood_score,
+       explanation = excluded.explanation,
+       model = excluded.model,
+       updated_at = unixepoch()`
+  )
+    .bind(thoughtId, uid, moodScore, explanation, model)
+    .run()
+}
+
+export async function getThoughtMoodByThoughtId(
+  env: Env,
+  uid: string,
+  thoughtId: number,
+): Promise<ThoughtMoodRow | null> {
+  const { results } = await env.DB.prepare(
+    `SELECT id, thought_id, uid, mood_score, explanation, model, created_at, updated_at
+     FROM thought_moods
+     WHERE thought_id = ? AND uid = ?`
+  )
+    .bind(thoughtId, uid)
+    .all<ThoughtMoodRow>()
+
+  return results[0] ?? null
+}
+
+export async function getThoughtMoodsForThoughtIds(
+  env: Env,
+  uid: string,
+  thoughtIds: number[],
+): Promise<Map<number, ThoughtMoodRow>> {
+  const out = new Map<number, ThoughtMoodRow>()
+  if (thoughtIds.length === 0) return out
+
+  const placeholders = thoughtIds.map(() => '?').join(',')
+  const { results } = await env.DB.prepare(
+    `SELECT id, thought_id, uid, mood_score, explanation, model, created_at, updated_at
+     FROM thought_moods
+     WHERE uid = ? AND thought_id IN (${placeholders})`
+  )
+    .bind(uid, ...thoughtIds)
+    .all<ThoughtMoodRow>()
+
+  for (const row of results) {
+    out.set(row.thought_id, row)
+  }
+
+  return out
 }

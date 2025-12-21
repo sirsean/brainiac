@@ -13,6 +13,7 @@ const dbMocks = vi.hoisted(() => {
     setThoughtTagsAiOnly: vi.fn(async () => undefined),
     markJobDone: vi.fn(async () => undefined),
     markJobError: vi.fn(async () => undefined),
+    upsertThoughtMood: vi.fn(async () => undefined),
 
     // api-only exports (not used here)
     ensureUser: vi.fn(),
@@ -180,7 +181,7 @@ describe('Worker queue consumer', () => {
     expect(msg.ack).toHaveBeenCalled()
   })
 
-  it('retries on errors and records job error', async () => {
+  it('retries on errors and records job error for tagging jobs', async () => {
     const env = makeEnv('not json')
 
     dbMocks.getAnalysisJobById.mockResolvedValue({
@@ -206,6 +207,82 @@ describe('Worker queue consumer', () => {
     dbMocks.getThoughtTags.mockResolvedValue([])
 
     const msg = makeMessage({ jobId: 1 })
+
+    await handler.queue!({ messages: [msg] } as unknown as MessageBatch<{ jobId: number }>, env, {
+      waitUntil: () => undefined,
+    } as unknown as ExecutionContext)
+
+    expect(dbMocks.markJobError).toHaveBeenCalled()
+    expect(msg.retry).toHaveBeenCalledWith({ delaySeconds: 30 })
+  })
+
+  it('processes mood jobs and upserts mood then marks job done', async () => {
+    const env = makeEnv('{"mood_score":4,"explanation":"Feels generally positive."}')
+
+    dbMocks.getAnalysisJobById.mockResolvedValue({
+      id: 2,
+      thought_id: 3,
+      uid: 'u1',
+      step: 'mood',
+      status: 'queued',
+    })
+
+    dbMocks.getThoughtById.mockResolvedValue({
+      id: 3,
+      uid: 'u1',
+      body: 'Today went pretty well overall.',
+      created_at: 1,
+      updated_at: null,
+      deleted_at: null,
+      status: 'active',
+      error: null,
+    })
+
+    const msg = makeMessage({ jobId: 2 })
+
+    await handler.queue!({ messages: [msg] } as unknown as MessageBatch<{ jobId: number }>, env, {
+      waitUntil: () => undefined,
+    } as unknown as ExecutionContext)
+
+    expect(dbMocks.upsertThoughtMood).toHaveBeenCalledWith(env, {
+      uid: 'u1',
+      thoughtId: 3,
+      moodScore: 4,
+      explanation: 'Feels generally positive.',
+      model: '@cf/openai/gpt-oss-20b',
+    })
+
+    expect(dbMocks.markJobDone).toHaveBeenCalledWith(
+      env,
+      2,
+      expect.stringContaining('mood_score'),
+    )
+    expect(msg.ack).toHaveBeenCalled()
+  })
+
+  it('retries on errors and records job error for mood jobs', async () => {
+    const env = makeEnv('{"mood_score":99,"explanation":"way out of range"}')
+
+    dbMocks.getAnalysisJobById.mockResolvedValue({
+      id: 3,
+      thought_id: 4,
+      uid: 'u1',
+      step: 'mood',
+      status: 'queued',
+    })
+
+    dbMocks.getThoughtById.mockResolvedValue({
+      id: 4,
+      uid: 'u1',
+      body: 'I feel strange.',
+      created_at: 1,
+      updated_at: null,
+      deleted_at: null,
+      status: 'active',
+      error: null,
+    })
+
+    const msg = makeMessage({ jobId: 3 })
 
     await handler.queue!({ messages: [msg] } as unknown as MessageBatch<{ jobId: number }>, env, {
       waitUntil: () => undefined,

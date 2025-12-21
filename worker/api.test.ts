@@ -33,8 +33,13 @@ const dbMocks = vi.hoisted(() => {
       (env: Env, opts: { uid: string; limit: number; cursor?: { createdAt: number; id: number } }) => Promise<unknown[]>
     >(),
     getTagsForThoughtIds: vi.fn<(env: Env, thoughtIds: number[]) => Promise<Map<number, string[]>>>(),
-    getAnalysisJobStatusSummariesForThoughtIds: vi.fn<(env: Env, uid: string, thoughtIds: number[]) => Promise<Map<number, unknown>>>(),
+    getAnalysisJobStatusSummariesForThoughtIds: vi.fn<
+      (env: Env, uid: string, thoughtIds: number[])
+        => Promise<Map<number, unknown>>
+    >(),
     getThoughtTags: vi.fn<(env: Env, thoughtId: number) => Promise<string[]>>(),
+    getThoughtMoodByThoughtId: vi.fn(),
+    getThoughtMoodsForThoughtIds: vi.fn(),
 
     listUserTagsWithStats: vi.fn<
       (env: Env, opts: { uid: string; limit: number; cursor?: { lastUsedAt: number; id: number } }) => Promise<unknown[]>
@@ -53,6 +58,7 @@ const dbMocks = vi.hoisted(() => {
     markJobProcessing: vi.fn(),
     incrementJobAttempts: vi.fn(),
     setThoughtTagsAiOnly: vi.fn(),
+    upsertThoughtMood: vi.fn(),
   }
 })
 
@@ -65,6 +71,7 @@ function makeEnv(): Env {
   return {
     FIREBASE_PROJECT_ID: 'proj',
     AI_TAGGER_MODEL: '@cf/openai/gpt-oss-20b',
+    AI_MOOD_MODEL: '@cf/openai/gpt-oss-20b',
     DB: {} as unknown as D1Database,
     ANALYSIS_QUEUE: {
       send: vi.fn(async () => undefined),
@@ -109,7 +116,7 @@ describe('Worker API', () => {
     await expect(res.json()).resolves.toMatchObject({ error: expect.any(String) })
   })
 
-  it('POST /api/thoughts creates thought and enqueues tagging job', async () => {
+  it('POST /api/thoughts creates thought and enqueues tagging and mood jobs', async () => {
     const env = makeEnv()
 
     dbMocks.createThought.mockResolvedValue({
@@ -123,14 +130,23 @@ describe('Worker API', () => {
       error: null,
     })
 
-    dbMocks.createAnalysisJob.mockResolvedValue({
-      id: 77,
-      thought_id: 123,
-      uid: 'u1',
-      step: 'tagging',
-      status: 'queued',
-      updated_at: 100,
-    })
+    dbMocks.createAnalysisJob
+      .mockResolvedValueOnce({
+        id: 77,
+        thought_id: 123,
+        uid: 'u1',
+        step: 'tagging',
+        status: 'queued',
+        updated_at: 100,
+      })
+      .mockResolvedValueOnce({
+        id: 78,
+        thought_id: 123,
+        uid: 'u1',
+        step: 'mood',
+        status: 'queued',
+        updated_at: 100,
+      })
 
     const res = await handler.fetch!(
       new Request('https://example.com/api/thoughts', {
@@ -150,13 +166,23 @@ describe('Worker API', () => {
     })
 
     expect(dbMocks.createThought).toHaveBeenCalledWith(env, 'u1', 'hello')
-    expect(dbMocks.createAnalysisJob).toHaveBeenCalledWith(env, { uid: 'u1', thoughtId: 123, step: 'tagging' })
+    expect(dbMocks.createAnalysisJob).toHaveBeenNthCalledWith(1, env, {
+      uid: 'u1',
+      thoughtId: 123,
+      step: 'tagging',
+    })
+    expect(dbMocks.createAnalysisJob).toHaveBeenNthCalledWith(2, env, {
+      uid: 'u1',
+      thoughtId: 123,
+      step: 'mood',
+    })
 
     const send = (env.ANALYSIS_QUEUE as unknown as { send: ReturnType<typeof vi.fn> }).send
     expect(send).toHaveBeenCalledWith({ jobId: 77 })
+    expect(send).toHaveBeenCalledWith({ jobId: 78 })
   })
 
-  it('PATCH /api/thoughts/:id updates thought and enqueues tagging job', async () => {
+  it('PATCH /api/thoughts/:id updates thought and enqueues tagging and mood jobs', async () => {
     const env = makeEnv()
 
     dbMocks.updateThoughtBody.mockResolvedValue({
@@ -170,14 +196,23 @@ describe('Worker API', () => {
       error: null,
     })
 
-    dbMocks.createAnalysisJob.mockResolvedValue({
-      id: 88,
-      thought_id: 5,
-      uid: 'u1',
-      step: 'tagging',
-      status: 'queued',
-      updated_at: 101,
-    })
+    dbMocks.createAnalysisJob
+      .mockResolvedValueOnce({
+        id: 88,
+        thought_id: 5,
+        uid: 'u1',
+        step: 'tagging',
+        status: 'queued',
+        updated_at: 101,
+      })
+      .mockResolvedValueOnce({
+        id: 89,
+        thought_id: 5,
+        uid: 'u1',
+        step: 'mood',
+        status: 'queued',
+        updated_at: 101,
+      })
 
     dbMocks.getThoughtTags.mockResolvedValue(['Foo'])
 
@@ -195,10 +230,20 @@ describe('Worker API', () => {
     expect(json).toMatchObject({ thought: { id: 5, tags: ['Foo'] } })
 
     expect(dbMocks.updateThoughtBody).toHaveBeenCalledWith(env, 'u1', 5, 'edited')
-    expect(dbMocks.createAnalysisJob).toHaveBeenCalledWith(env, { uid: 'u1', thoughtId: 5, step: 'tagging' })
+    expect(dbMocks.createAnalysisJob).toHaveBeenNthCalledWith(1, env, {
+      uid: 'u1',
+      thoughtId: 5,
+      step: 'tagging',
+    })
+    expect(dbMocks.createAnalysisJob).toHaveBeenNthCalledWith(2, env, {
+      uid: 'u1',
+      thoughtId: 5,
+      step: 'mood',
+    })
 
     const send = (env.ANALYSIS_QUEUE as unknown as { send: ReturnType<typeof vi.fn> }).send
     expect(send).toHaveBeenCalledWith({ jobId: 88 })
+    expect(send).toHaveBeenCalledWith({ jobId: 89 })
   })
 
   it('DELETE /api/thoughts/:id soft-deletes', async () => {
@@ -240,6 +285,7 @@ describe('Worker API', () => {
 
     dbMocks.getTagsForThoughtIds.mockResolvedValue(new Map([[1, ['Foo']], [2, []]]))
     dbMocks.getAnalysisJobStatusSummariesForThoughtIds.mockResolvedValue(new Map())
+    dbMocks.getThoughtMoodsForThoughtIds.mockResolvedValue(new Map())
 
     const res = await handler.fetch!(new Request('https://example.com/api/thoughts?limit=50'), env)
     expect(res.status).toBe(200)

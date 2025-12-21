@@ -21,6 +21,9 @@ import {
   getThoughtTags,
   setThoughtTagsAiOnly,
   getAnalysisJobStatusSummariesForThoughtIds,
+  upsertThoughtMood,
+  getThoughtMoodByThoughtId,
+  getThoughtMoodsForThoughtIds,
   type AnalysisJobStatusSummaryRow,
 } from './db'
 import { CloudflareAiApiClient, extractAiOutputText } from './cloudflareAiApiClient'
@@ -30,6 +33,7 @@ import {
   normalizeAndValidateTags,
   type TaggingAiResult,
 } from './tagger'
+import { buildMoodSystemPrompt, buildMoodUserPrompt, type MoodAiResult } from './mood'
 
 type ApiErrorBody = {
   error: string
@@ -226,24 +230,30 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
     }
 
     const thought = await createThought(env, auth.uid, thoughtBody)
-    const job = await createAnalysisJob(env, { uid: auth.uid, thoughtId: thought.id, step: 'tagging' })
-    await env.ANALYSIS_QUEUE.send({ jobId: job.id } satisfies AnalysisQueueMessage)
+    const taggingJob = await createAnalysisJob(env, { uid: auth.uid, thoughtId: thought.id, step: 'tagging' })
+    const moodJob = await createAnalysisJob(env, { uid: auth.uid, thoughtId: thought.id, step: 'mood' })
+
+    await env.ANALYSIS_QUEUE.send({ jobId: taggingJob.id } satisfies AnalysisQueueMessage)
+    await env.ANALYSIS_QUEUE.send({ jobId: moodJob.id } satisfies AnalysisQueueMessage)
+
+    const lastUpdatedAt = Math.max(taggingJob.updated_at, moodJob.updated_at)
 
     return json({
       thought: {
         ...thought,
         tags: [] as string[],
+        mood: null,
         analysis: {
           status: 'queued',
-          total: 1,
-          queued: 1,
+          total: 2,
+          queued: 2,
           processing: 0,
           done: 0,
           error: 0,
-          last_updated_at: job.updated_at,
+          last_updated_at: lastUpdatedAt,
         } satisfies ThoughtAnalysisSummary,
       },
-      job: { id: job.id, step: job.step, status: job.status },
+      job: { id: taggingJob.id, step: taggingJob.step, status: taggingJob.status },
       next_cursor: `${thought.created_at}:${thought.id}`,
     })
   }
@@ -255,15 +265,19 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
     const thought = await getThoughtById(env, auth.uid, id)
     if (thought.deleted_at) return err(404, 'Thought not found')
 
-    const [tags, jobSummaryMap] = await Promise.all([
+    const [tags, jobSummaryMap, moodRow] = await Promise.all([
       getThoughtTags(env, thought.id),
       getAnalysisJobStatusSummariesForThoughtIds(env, auth.uid, [thought.id]),
+      getThoughtMoodByThoughtId(env, auth.uid, thought.id),
     ])
 
     return json({
       thought: {
         ...thought,
         tags,
+        mood: moodRow
+          ? { score: moodRow.mood_score, explanation: moodRow.explanation, model: moodRow.model }
+          : null,
         analysis: summarizeJobs(jobSummaryMap.get(thought.id)),
       },
     })
@@ -289,26 +303,31 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
     }
 
     const thought = await updateThoughtBody(env, auth.uid, id, thoughtBody)
-    const job = await createAnalysisJob(env, { uid: auth.uid, thoughtId: thought.id, step: 'tagging' })
-    await env.ANALYSIS_QUEUE.send({ jobId: job.id } satisfies AnalysisQueueMessage)
+    const taggingJob = await createAnalysisJob(env, { uid: auth.uid, thoughtId: thought.id, step: 'tagging' })
+    const moodJob = await createAnalysisJob(env, { uid: auth.uid, thoughtId: thought.id, step: 'mood' })
+
+    await env.ANALYSIS_QUEUE.send({ jobId: taggingJob.id } satisfies AnalysisQueueMessage)
+    await env.ANALYSIS_QUEUE.send({ jobId: moodJob.id } satisfies AnalysisQueueMessage)
 
     const tags = await getThoughtTags(env, thought.id)
+    const lastUpdatedAt = Math.max(taggingJob.updated_at, moodJob.updated_at)
 
     return json({
       thought: {
         ...thought,
         tags,
+        mood: null,
         analysis: {
           status: 'queued',
-          total: 1,
-          queued: 1,
+          total: 2,
+          queued: 2,
           processing: 0,
           done: 0,
           error: 0,
-          last_updated_at: job.updated_at,
+          last_updated_at: lastUpdatedAt,
         } satisfies ThoughtAnalysisSummary,
       },
-      job: { id: job.id, step: job.step, status: job.status },
+      job: { id: taggingJob.id, step: taggingJob.step, status: taggingJob.status },
     })
   }
 
@@ -325,19 +344,26 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
     const thoughts = await listThoughts(env, { uid: auth.uid, limit, cursor })
 
     const thoughtIds = thoughts.map((t) => t.id)
-    const [tagMap, jobSummaryMap] = await Promise.all([
+    const [tagMap, jobSummaryMap, moodMap] = await Promise.all([
       getTagsForThoughtIds(env, thoughtIds),
       getAnalysisJobStatusSummariesForThoughtIds(env, auth.uid, thoughtIds),
+      getThoughtMoodsForThoughtIds(env, auth.uid, thoughtIds),
     ])
 
     const next = thoughts.length > 0 ? thoughts[thoughts.length - 1] : undefined
 
     return json({
-      thoughts: thoughts.map((t) => ({
-        ...t,
-        tags: tagMap.get(t.id) ?? [],
-        analysis: summarizeJobs(jobSummaryMap.get(t.id)),
-      })),
+      thoughts: thoughts.map((t) => {
+        const moodRow = moodMap.get(t.id)
+        return {
+          ...t,
+          tags: tagMap.get(t.id) ?? [],
+          mood: moodRow
+            ? { score: moodRow.mood_score, explanation: moodRow.explanation, model: moodRow.model }
+            : null,
+          analysis: summarizeJobs(jobSummaryMap.get(t.id)),
+        }
+      }),
       next_cursor: next ? `${next.created_at}:${next.id}` : null,
     })
   }
@@ -368,19 +394,26 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
     const thoughts = await listThoughtsByTagNames(env, { uid: auth.uid, tags, limit, cursor })
 
     const thoughtIds = thoughts.map((t) => t.id)
-    const [tagMap, jobSummaryMap] = await Promise.all([
+    const [tagMap, jobSummaryMap, moodMap] = await Promise.all([
       getTagsForThoughtIds(env, thoughtIds),
       getAnalysisJobStatusSummariesForThoughtIds(env, auth.uid, thoughtIds),
+      getThoughtMoodsForThoughtIds(env, auth.uid, thoughtIds),
     ])
 
     const next = thoughts.length > 0 ? thoughts[thoughts.length - 1] : undefined
 
     return json({
-      thoughts: thoughts.map((t) => ({
-        ...t,
-        tags: tagMap.get(t.id) ?? [],
-        analysis: summarizeJobs(jobSummaryMap.get(t.id)),
-      })),
+      thoughts: thoughts.map((t) => {
+        const moodRow = moodMap.get(t.id)
+        return {
+          ...t,
+          tags: tagMap.get(t.id) ?? [],
+          mood: moodRow
+            ? { score: moodRow.mood_score, explanation: moodRow.explanation, model: moodRow.model }
+            : null,
+          analysis: summarizeJobs(jobSummaryMap.get(t.id)),
+        }
+      }),
       next_cursor: next ? `${next.created_at}:${next.id}` : null,
     })
   }
@@ -408,19 +441,26 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
     })
 
     const thoughtIds = thoughts.map((t) => t.id)
-    const [tagMap, jobSummaryMap] = await Promise.all([
+    const [tagMap, jobSummaryMap, moodMap] = await Promise.all([
       getTagsForThoughtIds(env, thoughtIds),
       getAnalysisJobStatusSummariesForThoughtIds(env, auth.uid, thoughtIds),
+      getThoughtMoodsForThoughtIds(env, auth.uid, thoughtIds),
     ])
 
     const next = thoughts.length > 0 ? thoughts[thoughts.length - 1] : undefined
 
     return json({
-      thoughts: thoughts.map((t) => ({
-        ...t,
-        tags: tagMap.get(t.id) ?? [],
-        analysis: summarizeJobs(jobSummaryMap.get(t.id)),
-      })),
+      thoughts: thoughts.map((t) => {
+        const moodRow = moodMap.get(t.id)
+        return {
+          ...t,
+          tags: tagMap.get(t.id) ?? [],
+          mood: moodRow
+            ? { score: moodRow.mood_score, explanation: moodRow.explanation, model: moodRow.model }
+            : null,
+          analysis: summarizeJobs(jobSummaryMap.get(t.id)),
+        }
+      }),
       next_cursor: next ? `${next.created_at}:${next.id}` : null,
     })
   }
@@ -445,11 +485,13 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
     })
 
     const counts: Record<string, number> = {}
+    const avgMood: Record<string, number | null> = {}
     for (const r of rows) {
       counts[r.day] = Number(r.count)
+      avgMood[r.day] = r.avg_mood_score == null ? null : Number(r.avg_mood_score)
     }
 
-    return json({ counts })
+    return json({ counts, avg_mood: avgMood })
   }
 
   return err(404, 'Not found')
@@ -472,17 +514,16 @@ async function runTaggerAi(env: Env, model: string, input: unknown): Promise<unk
   return await client.run(model, input)
 }
 
-async function processTaggingJob(env: Env, jobId: number): Promise<void> {
-  const job = await getAnalysisJobById(env, jobId)
+async function processTaggingJob(env: Env, job: AnalysisJobRow): Promise<void> {
   if (job.step !== 'tagging') return
   if (job.status === 'done') return
 
-  await markJobProcessing(env, jobId)
-  await incrementJobAttempts(env, jobId)
+  await markJobProcessing(env, job.id)
+  await incrementJobAttempts(env, job.id)
 
   const thought = await getThoughtById(env, job.uid, job.thought_id)
   if (thought.deleted_at) {
-    await markJobDone(env, jobId, JSON.stringify({ skipped: 'thought_deleted' }))
+    await markJobDone(env, job.id, JSON.stringify({ skipped: 'thought_deleted' }))
     return
   }
 
@@ -521,7 +562,68 @@ async function processTaggingJob(env: Env, jobId: number): Promise<void> {
     raw: parsed,
   })
 
-  await markJobDone(env, jobId, resultJson)
+  await markJobDone(env, job.id, resultJson)
+}
+
+async function processMoodJob(env: Env, job: AnalysisJobRow): Promise<void> {
+  if (job.step !== 'mood') return
+  if (job.status === 'done') return
+
+  await markJobProcessing(env, job.id)
+  await incrementJobAttempts(env, job.id)
+
+  const thought = await getThoughtById(env, job.uid, job.thought_id)
+  if (thought.deleted_at) {
+    await markJobDone(env, job.id, JSON.stringify({ skipped: 'thought_deleted' }))
+    return
+  }
+
+  const system = buildMoodSystemPrompt()
+  const user = buildMoodUserPrompt({ thought: thought.body })
+
+  const model = env.AI_MOOD_MODEL || env.AI_TAGGER_MODEL || '@cf/openai/gpt-oss-20b'
+
+  const aiInput = {
+    instructions: system,
+    input: user,
+  }
+
+  const aiOut = await runTaggerAi(env, model, aiInput)
+  const outputText = extractAiOutputText(aiOut)
+
+  let parsed: MoodAiResult
+  try {
+    parsed = JSON.parse(outputText) as MoodAiResult
+  } catch {
+    throw new Error('AI returned non-JSON mood output')
+  }
+
+  const score = Number(parsed.mood_score)
+  if (!Number.isFinite(score) || !Number.isInteger(score) || score < 1 || score > 5) {
+    throw new Error('AI returned invalid mood_score (expected integer 1-5)')
+  }
+
+  const explanation = typeof parsed.explanation === 'string' ? parsed.explanation.trim() : ''
+  if (!explanation) {
+    throw new Error('AI returned empty explanation')
+  }
+
+  await upsertThoughtMood(env, {
+    uid: job.uid,
+    thoughtId: thought.id,
+    moodScore: score,
+    explanation,
+    model,
+  })
+
+  const resultJson = JSON.stringify({
+    model,
+    mood_score: score,
+    explanation,
+    raw: parsed,
+  })
+
+  await markJobDone(env, job.id, resultJson)
 }
 
 export default {
@@ -545,7 +647,16 @@ export default {
       }
 
       try {
-        await processTaggingJob(env, body.jobId)
+        const job = await getAnalysisJobById(env, body.jobId)
+
+        if (job.step === 'tagging') {
+          await processTaggingJob(env, job)
+        } else if (job.step === 'mood') {
+          await processMoodJob(env, job)
+        } else {
+          await markJobDone(env, job.id, JSON.stringify({ skipped: 'unknown_step', step: job.step }))
+        }
+
         message.ack()
       } catch (e) {
         const err = e instanceof Error ? e : new Error(String(e))

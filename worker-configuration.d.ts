@@ -8,6 +8,7 @@ declare namespace Cloudflare {
 	interface Env {
 		FIREBASE_PROJECT_ID: string;
 		AI_TAGGER_MODEL: string;
+		AI_MOOD_MODEL?: string;
 		CLOUDFLARE_ACCOUNT_ID: string;
 		CLOUDFLARE_API_TOKEN: string;
 		DB: D1Database;

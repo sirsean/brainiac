@@ -6,6 +6,12 @@ import { analysisLabel, type ThoughtAnalysisSummary } from './analysisLabel'
 import { Calendar } from './Calendar'
 import { useAuth } from './useAuth'
 
+type ThoughtMood = {
+  score: number
+  explanation: string
+  model: string | null
+}
+
 type Thought = {
   id: number
   uid: string
@@ -16,6 +22,7 @@ type Thought = {
   status: string
   error: string | null
   tags: string[]
+  mood: ThoughtMood | null
   analysis: ThoughtAnalysisSummary | null
 }
 
@@ -54,6 +61,7 @@ function App() {
   const [selectedDate, setSelectedDate] = useState<string | null>(null) // YYYY-MM-DD (local)
   const [calendarMonth, setCalendarMonth] = useState<string>(() => currentMonthKey()) // YYYY-MM
   const [dayCounts, setDayCounts] = useState<Record<string, number>>({})
+  const [dayAvgMood, setDayAvgMood] = useState<Record<string, number | null>>({})
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [navOpen, setNavOpen] = useState(false) // mounted
@@ -152,12 +160,13 @@ function App() {
     }
 
     const path = `/api/thoughts/day-counts?${params.toString()}`
-    const data = await apiFetch<{ counts: Record<string, number> }>({
+    const data = await apiFetch<{ counts: Record<string, number>; avg_mood?: Record<string, number | null> }>({
       path,
       getIdToken,
     })
 
     setDayCounts(data.counts)
+    setDayAvgMood(data.avg_mood ?? {})
   }
 
   useEffect(() => {
@@ -284,6 +293,16 @@ function App() {
 
         for (const id of idsToRefresh) {
           await refreshThoughtById(id)
+        }
+
+        // When jobs finish (including the mood step), refresh the calendar so
+        // per-day mood colors and counts stay in sync.
+        if (idsToRefresh.length > 0) {
+          try {
+            await refreshDayCounts()
+          } catch {
+            // ignore calendar refresh errors during polling
+          }
         }
       } catch {
         // ignore polling errors
@@ -498,6 +517,7 @@ function App() {
                   month={calendarMonth}
                   selectedDate={selectedDate}
                   countsByDay={dayCounts}
+                  avgMoodByDay={dayAvgMood}
                   onChangeMonth={changeCalendarMonth}
                   onSelectDate={selectDate}
                 />
@@ -679,6 +699,7 @@ function App() {
                   month={calendarMonth}
                   selectedDate={selectedDate}
                   countsByDay={dayCounts}
+                  avgMoodByDay={dayAvgMood}
                   onChangeMonth={changeCalendarMonth}
                   onSelectDate={selectDate}
                 />
@@ -741,6 +762,21 @@ function ThoughtCard(props: {
   const status = analysisLabel(thought.analysis)
   const showActions = actionsOpen || editing
 
+  const mood = thought.mood
+  let moodClass = ''
+  let moodLabel = ''
+  if (mood && typeof mood.score === 'number') {
+    const s = mood.score
+    moodLabel = String(s)
+    if (s <= 2) {
+      moodClass = 'border-red-500/70 bg-red-500/20 text-red-100'
+    } else if (s >= 4) {
+      moodClass = 'border-emerald-400/80 bg-emerald-500/15 text-emerald-100'
+    } else {
+      moodClass = 'border-amber-400/70 bg-amber-500/15 text-amber-100'
+    }
+  }
+
   return (
     <article className="rounded-xl border border-amber-400/25 bg-black/70 p-3 shadow-[0_0_32px_rgba(250,204,21,0.08)]">
       <div className="mb-2 flex flex-wrap items-center gap-3 text-[0.7rem] text-amber-200/75">
@@ -750,6 +786,22 @@ function ThoughtCard(props: {
           {thought.updated_at ? <span className="muted">(edited {formatTs(thought.updated_at)})</span> : null}
         </div>
         <div className="ml-auto flex items-center gap-2">
+          {mood && moodClass ? (
+            <span
+              className={
+                'chip border px-2 py-0.5 text-[0.6rem] uppercase tracking-[0.18em] ' +
+                moodClass
+              }
+              title={
+                mood.explanation
+                  ? `Mood ${mood.score}: ${mood.explanation}`
+                  : `Mood ${mood.score}`
+              }
+              aria-label={`Mood score ${mood.score}`}
+            >
+              {moodLabel}
+            </span>
+          ) : null}
           {status ? (
             <span
               className={`chip status ${status.className} border px-2 py-0.5 text-[0.65rem] uppercase tracking-[0.18em] text-amber-100`}

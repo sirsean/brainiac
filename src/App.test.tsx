@@ -39,10 +39,11 @@ describe('App', () => {
     })
   })
 
-  it('renders brainiac header', () => {
+  it('renders brainiac header branding', () => {
     render(<App />)
 
-    expect(screen.getByRole('heading', { level: 1, name: 'brainiac' })).toBeInTheDocument()
+    // Header uses an sr-only text label instead of a visible heading element.
+    expect(screen.getByText('brainiac')).toBeInTheDocument()
   })
 
   it('renders sign-in button when signed out', () => {

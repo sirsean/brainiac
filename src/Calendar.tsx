@@ -2,6 +2,7 @@ type CalendarProps = {
   month: string // YYYY-MM
   selectedDate: string | null // YYYY-MM-DD
   countsByDay: Record<string, number>
+  avgMoodByDay?: Record<string, number | null>
   onChangeMonth: (deltaMonths: number) => void
   onSelectDate: (date: string) => void
 }
@@ -24,7 +25,7 @@ function monthLabel(month: string): string {
 }
 
 export function Calendar(props: CalendarProps) {
-  const { month, selectedDate, countsByDay, onChangeMonth, onSelectDate } = props
+  const { month, selectedDate, countsByDay, avgMoodByDay, onChangeMonth, onSelectDate } = props
 
   const m = month.match(/^(\d{4})-(\d{2})$/)
   const year = m ? Number(m[1]) : new Date().getFullYear()
@@ -85,6 +86,24 @@ export function Calendar(props: CalendarProps) {
 
           const count = countsByDay[c.date] ?? 0
           const isSelected = selectedDate === c.date
+          const avgMood = avgMoodByDay?.[c.date] ?? null
+
+          let variantClass: string
+          if (isSelected) {
+            variantClass =
+              'border-amber-400/90 bg-amber-500/20 text-amber-50 shadow-[0_0_18px_rgba(245,158,11,0.7)]'
+          } else if (avgMood != null) {
+            if (avgMood <= 2.25) {
+              variantClass = 'border-red-500/70 bg-red-500/20 text-red-50'
+            } else if (avgMood >= 3.75) {
+              variantClass = 'border-emerald-400/70 bg-emerald-500/15 text-emerald-50'
+            } else {
+              variantClass = 'border-amber-400/40 bg-amber-500/10 text-amber-100'
+            }
+          } else {
+            variantClass =
+              'border-amber-400/20 bg-black/40 text-amber-100 hover:border-amber-300/70 hover:bg-amber-500/10'
+          }
 
           return (
             <button
@@ -93,9 +112,7 @@ export function Calendar(props: CalendarProps) {
               onClick={() => onSelectDate(c.date!)}
               className={
                 'flex min-h-[2.25rem] flex-col items-center justify-start rounded-md border px-1 py-1 text-xs transition-colors ' +
-                (isSelected
-                  ? 'border-amber-400/90 bg-amber-500/20 text-amber-50 shadow-[0_0_18px_rgba(245,158,11,0.7)]'
-                  : 'border-amber-400/20 bg-black/40 text-amber-100 hover:border-amber-300/70 hover:bg-amber-500/10')
+                variantClass
               }
             >
               <span className="text-[0.7rem] leading-none">{c.dayNum}</span>
