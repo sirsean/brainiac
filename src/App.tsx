@@ -594,6 +594,7 @@ function App() {
                   }}
                   placeholder="Write a thought…"
                   rows={8}
+                  tabIndex={1}
                   className="w-full min-h-[10rem] resize-y rounded-lg border border-amber-400/30 bg-black/70 px-3 py-2 text-sm text-amber-100 placeholder:text-amber-300/40 shadow-inner shadow-amber-500/10 focus:outline-none focus:ring-2 focus:ring-amber-400/70 focus:border-amber-300/80"
                 />
                 <div className="mt-2 flex flex-wrap gap-2 text-xs">
