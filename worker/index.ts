@@ -24,6 +24,7 @@ import {
   upsertThoughtMood,
   getThoughtMoodByThoughtId,
   getThoughtMoodsForThoughtIds,
+  type AnalysisJobRow,
   type AnalysisJobStatusSummaryRow,
 } from './db'
 import { CloudflareAiApiClient, extractAiOutputText } from './cloudflareAiApiClient'

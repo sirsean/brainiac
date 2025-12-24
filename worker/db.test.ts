@@ -101,7 +101,7 @@ describe('db', () => {
   it('listThoughtCountsByLocalDay binds tzOffsetSeconds and uid/start/end in order when tags are omitted', async () => {
     const all = vi.fn(async () => ({ results: [] }))
     const bind = vi.fn(() => ({ all }))
-    const prepare = vi.fn(() => ({ bind }))
+    const prepare = vi.fn((sql: string) => ({ bind, sql }))
 
     const env = {
       DB: { prepare } as unknown as D1Database,
@@ -125,7 +125,7 @@ describe('db', () => {
   it('listThoughtCountsByLocalDay binds tzOffsetSeconds after tag filters when tags are provided', async () => {
     const all = vi.fn(async () => ({ results: [] }))
     const bind = vi.fn(() => ({ all }))
-    const prepare = vi.fn(() => ({ bind }))
+    const prepare = vi.fn((sql: string) => ({ bind, sql }))
 
     const env = {
       DB: { prepare } as unknown as D1Database,
