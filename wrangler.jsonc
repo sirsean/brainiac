@@ -15,7 +15,8 @@
 	},
 	"vars": {
 		"FIREBASE_PROJECT_ID": "brainiac-c9e97",
-		"AI_TAGGER_MODEL": "@cf/openai/gpt-oss-20b"
+		"AI_TAGGER_MODEL": "@cf/openai/gpt-oss-20b",
+		"CLOUDFLARE_ACCOUNT_ID": "f400e5cfc5e8cd621a3c3f9264a92bc4"
 	},
 	"d1_databases": [
 		{
