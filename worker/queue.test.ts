@@ -52,7 +52,7 @@ function makeEnv(aiOutputText: string): Env {
         choices: [{ message: { content: aiOutputText } }],
       })),
     } as unknown as Ai,
-  }
+  } as unknown as Env
 }
 
 function makeMessage(body: unknown) {

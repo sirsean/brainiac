@@ -79,7 +79,7 @@ function makeEnv(): Env {
     AI: {
       run: vi.fn(async () => ({ output_text: '{"tags":[]}' })),
     } as unknown as Ai,
-  }
+  } as unknown as Env
 }
 
 beforeEach(() => {

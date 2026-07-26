@@ -1,6 +1,6 @@
 declare namespace Cloudflare {
   interface Env {
-    // Intentionally empty: generated Env lives in worker-configuration.d.ts.
-    // Add optional Worker-only env extensions here if needed.
+    /** Optional override for mood analysis; falls back to AI_TAGGER_MODEL. */
+    AI_MOOD_MODEL?: string
   }
 }
