@@ -105,6 +105,8 @@ function App() {
   const [busy, setBusy] = useState(false)
   const [navOpen, setNavOpen] = useState(false) // mounted
   const [navVisible, setNavVisible] = useState(false) // animated open/close
+  const [composeExpanded, setComposeExpanded] = useState(false)
+  const composeRef = useRef<HTMLTextAreaElement | null>(null)
 
   const tagQuery = useMemo(() => selectedTags.join(','), [selectedTags])
 
@@ -360,6 +362,16 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loading, user, busy, pollIdsKey])
 
+  useEffect(() => {
+    if (!composeExpanded) return
+    const el = composeRef.current
+    if (!el) return
+    el.focus()
+    // Place caret at end after expanding.
+    const len = el.value.length
+    el.setSelectionRange(len, len)
+  }, [composeExpanded])
+
   async function onCreateThought() {
     if (busy) return
 
@@ -376,6 +388,7 @@ function App() {
         getIdToken,
       })
       setNewThought('')
+      setComposeExpanded(false)
       setThoughtsCursor(null)
       await Promise.all([refreshTags(), refreshThoughts(true), refreshDayCounts()])
     } catch (e) {
@@ -618,31 +631,27 @@ function App() {
               <div className="rounded-xl border border-amber-400/30 bg-gradient-to-br from-black/90 via-zinc-950/90 to-black/80 p-3 shadow-[0_0_45px_rgba(250,204,21,0.12)]">
                 <div className="mb-2 flex items-center justify-between text-[0.7rem] uppercase tracking-[0.25em] text-amber-300/80">
                   <span>Thought input</span>
-                  <span className="text-amber-400/70">Ctrl+Enter to deploy</span>
+                  <span className="text-amber-400/70">Tap to expand · Ctrl+Enter to deploy</span>
                 </div>
-                <textarea
-                  value={newThought}
-                  onChange={(e) => setNewThought(e.target.value)}
-                  onKeyDown={(e) => {
-                    // Submit with Ctrl+Enter (or Cmd+Enter on macOS), keep Enter for newlines.
-                    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-                      e.preventDefault()
-                      void onCreateThought()
-                    }
-                  }}
-                  placeholder="Write a thought…"
-                  rows={8}
-                  tabIndex={1}
-                  className="w-full min-h-[10rem] resize-y rounded-lg border border-amber-400/30 bg-black/70 px-3 py-2 text-sm text-amber-100 placeholder:text-amber-300/40 shadow-inner shadow-amber-500/10 focus:outline-none focus:ring-2 focus:ring-amber-400/70 focus:border-amber-300/80"
-                />
+                <button
+                  type="button"
+                  onClick={() => setComposeExpanded(true)}
+                  aria-label="expand thought editor"
+                  className="flex w-full min-h-[4.5rem] flex-col items-stretch rounded-lg border border-amber-400/30 bg-black/70 px-3 py-2 text-left text-sm shadow-inner shadow-amber-500/10 transition-colors hover:border-amber-300/60 focus:outline-none focus:ring-2 focus:ring-amber-400/70"
+                >
+                  {newThought.trim() ? (
+                    <span className="line-clamp-3 whitespace-pre-wrap text-amber-100">{newThought}</span>
+                  ) : (
+                    <span className="text-amber-300/40">Write a thought…</span>
+                  )}
+                </button>
                 <div className="mt-2 flex flex-wrap gap-2 text-xs">
                   <button
-                    onClick={() => void onCreateThought()}
-                    disabled={busy}
-                    aria-label="add thought"
-                    className="rounded border border-amber-400/80 bg-amber-500/20 px-3 py-1 text-[0.7rem] uppercase tracking-[0.2em] text-amber-100 shadow-[0_0_20px_rgba(245,158,11,0.7)] transition-colors hover:bg-amber-500/30 disabled:cursor-not-allowed disabled:opacity-40"
+                    type="button"
+                    onClick={() => setComposeExpanded(true)}
+                    className="rounded border border-amber-400/80 bg-amber-500/20 px-3 py-1 text-[0.7rem] uppercase tracking-[0.2em] text-amber-100 shadow-[0_0_20px_rgba(245,158,11,0.7)] transition-colors hover:bg-amber-500/30"
                   >
-                    Add
+                    Write
                   </button>
                   <button
                     onClick={() =>
@@ -781,6 +790,68 @@ function App() {
           </small>
         </footer>
       </div>
+
+      {user && composeExpanded ? (
+        <div
+          className="fixed inset-0 z-40 flex flex-col bg-black"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Compose thought"
+        >
+          <div
+            className="pointer-events-none absolute inset-0 opacity-100"
+            style={{
+              backgroundImage:
+                'radial-gradient(circle at top, rgba(250, 204, 21, 0.14), transparent 55%), linear-gradient(to right, rgba(250, 204, 21, 0.08) 1px, transparent 1px), linear-gradient(to bottom, rgba(250, 204, 21, 0.05) 1px, transparent 1px)',
+              backgroundSize: '100% 100%, 80px 80px, 80px 80px',
+            }}
+          />
+          <div className="relative flex h-full min-h-0 flex-col gap-3 p-4 sm:p-6">
+            <div className="flex shrink-0 items-center justify-between gap-3">
+              <button
+                type="button"
+                onClick={() => setComposeExpanded(false)}
+                aria-label="shrink thought editor"
+                className="rounded border border-amber-400/50 bg-black/60 px-3 py-2 text-[0.7rem] uppercase tracking-[0.2em] text-amber-200 hover:border-amber-300 hover:bg-amber-500/10 transition-colors"
+              >
+                Shrink
+              </button>
+              <span className="hidden text-[0.65rem] uppercase tracking-[0.25em] text-amber-400/70 sm:inline">
+                Ctrl+Enter to deploy · Esc to shrink
+              </span>
+              <button
+                type="button"
+                onClick={() => void onCreateThought()}
+                disabled={busy || !newThought.trim()}
+                aria-label="add thought"
+                className="rounded border border-amber-400/80 bg-amber-500/20 px-4 py-2 text-[0.7rem] uppercase tracking-[0.2em] text-amber-100 shadow-[0_0_20px_rgba(245,158,11,0.7)] transition-colors hover:bg-amber-500/30 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Add
+              </button>
+            </div>
+
+            <textarea
+              ref={composeRef}
+              value={newThought}
+              onChange={(e) => setNewThought(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') {
+                  e.preventDefault()
+                  setComposeExpanded(false)
+                  return
+                }
+                if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                  e.preventDefault()
+                  void onCreateThought()
+                }
+              }}
+              placeholder="Write a thought…"
+              tabIndex={1}
+              className="relative min-h-0 w-full flex-1 resize-none rounded-xl border border-amber-400/30 bg-black/80 px-4 py-4 text-base leading-relaxed text-amber-100 placeholder:text-amber-300/40 shadow-[0_0_45px_rgba(250,204,21,0.12)] focus:outline-none focus:ring-2 focus:ring-amber-400/70 focus:border-amber-300/80 sm:text-lg"
+            />
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 }

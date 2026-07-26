@@ -132,6 +132,11 @@ describe('App composer', () => {
 
     render(<App />)
 
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText('expand thought editor'))
+      await Promise.resolve()
+    })
+
     const textarea = screen.getByPlaceholderText('Write a thought…')
 
     await act(async () => {
