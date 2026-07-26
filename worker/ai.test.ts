@@ -8,6 +8,7 @@ import {
   isGlmModel,
   isKimiModel,
   parseJsonObjectFromAiText,
+  parseWorkersAiSseDataLine,
   runWorkersAi,
 } from './ai'
 
@@ -101,5 +102,18 @@ describe('parseJsonObjectFromAiText', () => {
         'not json at all',
       )
     }
+  })
+})
+
+describe('parseWorkersAiSseDataLine', () => {
+  it('extracts Kimi reasoning_content deltas', () => {
+    const line =
+      'data: {"choices":[{"delta":{"content":"","reasoning_content":"hello"},"finish_reason":null,"index":0}]}'
+    expect(parseWorkersAiSseDataLine(line)).toEqual([{ type: 'reasoning', text: 'hello' }])
+  })
+
+  it('extracts content deltas', () => {
+    const line = 'data: {"choices":[{"delta":{"content":"Hi","reasoning_content":null},"index":0}]}'
+    expect(parseWorkersAiSseDataLine(line)).toEqual([{ type: 'content', text: 'Hi' }])
   })
 })

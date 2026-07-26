@@ -4,7 +4,13 @@ import './App.css'
 import { apiFetch } from './api'
 import { analysisLabel, type ThoughtAnalysisSummary } from './analysisLabel'
 import { Calendar } from './Calendar'
+import { TherapyAnalysisPage } from './TherapyAnalysisPage'
 import { useAuth } from './useAuth'
+
+function normalizeAppPath(pathname: string): string {
+  const trimmed = pathname.replace(/\/+$/, '')
+  return trimmed || '/'
+}
 
 type ThoughtMood = {
   score: number
@@ -107,8 +113,30 @@ function App() {
   const [navVisible, setNavVisible] = useState(false) // animated open/close
   const [composeExpanded, setComposeExpanded] = useState(false)
   const composeRef = useRef<HTMLTextAreaElement | null>(null)
+  const [path, setPath] = useState(() => normalizeAppPath(window.location.pathname))
+  const onAnalysis = path === '/analysis'
 
   const tagQuery = useMemo(() => selectedTags.join(','), [selectedTags])
+
+  useEffect(() => {
+    const onPopState = () => setPath(normalizeAppPath(window.location.pathname))
+    window.addEventListener('popstate', onPopState)
+    return () => window.removeEventListener('popstate', onPopState)
+  }, [])
+
+  function navigate(to: string) {
+    const next = normalizeAppPath(to)
+    if (normalizeAppPath(window.location.pathname) !== next) {
+      window.history.pushState({}, '', next)
+    }
+    setPath(next)
+  }
+
+  function openAnalysis() {
+    setNavVisible(false)
+    setComposeExpanded(false)
+    navigate('/analysis')
+  }
 
   async function refreshTags() {
     const data = await apiFetch<{ tags: TagStats[] }>({
@@ -212,6 +240,7 @@ function App() {
   useEffect(() => {
     if (loading) return
     if (!user) return
+    if (onAnalysis) return
 
     setError(null)
     setThoughtsCursor(null)
@@ -224,11 +253,12 @@ function App() {
       }
     })()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loading, user, tagQuery, selectedDate])
+  }, [loading, user, tagQuery, selectedDate, onAnalysis])
 
   useEffect(() => {
     if (loading) return
     if (!user) return
+    if (onAnalysis) return
 
     void (async () => {
       try {
@@ -238,7 +268,7 @@ function App() {
       }
     })()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loading, user, tagQuery, calendarMonth])
+  }, [loading, user, tagQuery, calendarMonth, onAnalysis])
 
   const statusByThoughtIdRef = useRef<Record<number, ThoughtAnalysisSummary['status']>>({})
   const tagsByNameRef = useRef<Set<string>>(new Set())
@@ -484,22 +514,31 @@ function App() {
       <header className="border-b border-amber-400/40 bg-black/80 backdrop-blur sticky top-0 z-20">
         <div className="mx-auto flex max-w-5xl items-center justify-between gap-4 px-4 py-3">
           <div className="flex items-center gap-3">
+            {!onAnalysis ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setNavOpen(true)
+                  setTimeout(() => setNavVisible(true), 0)
+                }}
+                className="inline-flex h-8 w-8 items-center justify-center rounded border border-amber-400/60 bg-black/70 text-[0.65rem] uppercase tracking-[0.2em] text-amber-200 shadow-[0_0_12px_rgba(250,204,21,0.4)] hover:border-amber-300 hover:bg-amber-500/10 transition-colors md:hidden"
+                aria-label="Open browse and tags panel"
+              >
+                ◤◢
+              </button>
+            ) : null}
             <button
               type="button"
-              onClick={() => {
-                setNavOpen(true)
-                setTimeout(() => setNavVisible(true), 0)
-              }}
-              className="inline-flex h-8 w-8 items-center justify-center rounded border border-amber-400/60 bg-black/70 text-[0.65rem] uppercase tracking-[0.2em] text-amber-200 shadow-[0_0_12px_rgba(250,204,21,0.4)] hover:border-amber-300 hover:bg-amber-500/10 transition-colors md:hidden"
-              aria-label="Open browse and tags panel"
+              onClick={() => navigate('/')}
+              className="rounded-md focus:outline-none focus:ring-2 focus:ring-amber-400/70"
+              aria-label="Go to home"
             >
-              ◤◢
+              <img
+                src="/apple-touch-icon.png"
+                alt="Brainiac logo"
+                className="h-8 w-8 rounded-md border border-amber-400/70 shadow-[0_0_18px_rgba(250,204,21,0.6)]"
+              />
             </button>
-            <img
-              src="/apple-touch-icon.png"
-              alt="Brainiac logo"
-              className="h-8 w-8 rounded-md border border-amber-400/70 shadow-[0_0_18px_rgba(250,204,21,0.6)]"
-            />
             <span className="sr-only">brainiac</span>
           </div>
           <div className="flex items-center gap-3 text-sm">
@@ -560,6 +599,15 @@ function App() {
             </div>
 
             <div className="space-y-4 text-xs">
+              <button
+                type="button"
+                onClick={openAnalysis}
+                aria-label="Open therapy analysis"
+                className="w-full rounded border border-amber-400/70 bg-amber-500/15 px-3 py-2 text-[0.7rem] uppercase tracking-[0.2em] text-amber-100 shadow-[0_0_18px_rgba(245,158,11,0.35)] hover:bg-amber-500/25"
+              >
+                Analysis
+              </button>
+
               <div>
                 <h2 className="mb-2 text-[0.65rem] font-semibold uppercase tracking-[0.25em] text-amber-300/80">
                   Calendar
@@ -606,6 +654,9 @@ function App() {
         </div>
       )}
 
+      {!loading && user && onAnalysis ? (
+        <TherapyAnalysisPage getIdToken={getIdToken} onBack={() => navigate('/')} />
+      ) : (
       <div className="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-3 px-4 py-4">
         {error ? <div className="error">Error: {error}</div> : null}
 
@@ -739,6 +790,15 @@ function App() {
 
             {/* Desktop sidebar (hidden on mobile, lives in slide-out there) */}
             <aside className="hidden space-y-4 rounded-xl border border-amber-400/30 bg-gradient-to-b from-black/80 via-zinc-950/90 to-black/80 p-3 shadow-[0_0_40px_rgba(250,204,21,0.08)] md:block">
+              <button
+                type="button"
+                onClick={openAnalysis}
+                aria-label="Open therapy analysis"
+                className="w-full rounded border border-amber-400/70 bg-amber-500/15 px-3 py-2 text-[0.7rem] uppercase tracking-[0.2em] text-amber-100 shadow-[0_0_18px_rgba(245,158,11,0.35)] hover:bg-amber-500/25"
+              >
+                Analysis
+              </button>
+
               <div>
                 <h2 className="mb-2 text-xs font-semibold uppercase tracking-[0.25em] text-amber-300/80">
                   Browse
@@ -790,8 +850,9 @@ function App() {
           </small>
         </footer>
       </div>
+      )}
 
-      {user && composeExpanded ? (
+      {user && composeExpanded && !onAnalysis ? (
         <div
           className="fixed inset-0 z-40 flex flex-col bg-black"
           role="dialog"

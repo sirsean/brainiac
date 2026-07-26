@@ -25,10 +25,12 @@ afterEach(() => {
   cleanup()
   vi.useRealTimers()
   vi.resetAllMocks()
+  window.history.pushState({}, '', '/')
 })
 
 describe('App', () => {
   beforeEach(() => {
+    window.history.pushState({}, '', '/')
     // Default to signed-out.
     authMocks.useAuth.mockReturnValue({
       loading: false,
@@ -155,10 +157,42 @@ describe('App composer', () => {
     expect(postCall).toBeTruthy()
     expect(((postCall![0] as ApiFetchCall).body as { body?: unknown } | undefined)?.body).toBe('hello world')
   })
+
+  it('navigates to therapy analysis page from the sidebar button', async () => {
+    apiMocks.apiFetch.mockImplementation(async ({ path }: { path: string }) => {
+      if (path === '/api/tags?limit=200') return { tags: [] }
+      if (path.startsWith('/api/thoughts/day-counts?')) return { counts: {} }
+      if (path.startsWith('/api/thoughts?')) return { thoughts: [], next_cursor: null }
+      if (path.startsWith('/api/therapy-reports/preview?')) {
+        return {
+          thought_count: 0,
+          truncated: false,
+          tag_counts: [],
+          mood_by_day: [],
+          mood_avg: null,
+        }
+      }
+      throw new Error(`Unexpected apiFetch path: ${path}`)
+    })
+
+    window.history.pushState({}, '', '/')
+    render(<App />)
+
+    await act(async () => {
+      fireEvent.click(screen.getAllByLabelText('Open therapy analysis')[0]!)
+      await Promise.resolve()
+    })
+
+    expect(window.location.pathname).toBe('/analysis')
+    expect(screen.getByRole('main', { name: 'Therapy analysis' })).toBeTruthy()
+    expect(screen.getByText('Generate report')).toBeTruthy()
+    expect(screen.queryByRole('dialog', { name: 'Therapy analysis' })).toBeNull()
+  })
 })
 
 describe('App polling', () => {
   beforeEach(() => {
+    window.history.pushState({}, '', '/')
     const fakeUser = { uid: 'u1', email: 'u1@example.com' } as unknown as User
 
     authMocks.useAuth.mockReturnValue({

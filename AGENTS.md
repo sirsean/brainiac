@@ -62,8 +62,9 @@ Brainiac is a tiny thought-capture app: Google sign-in (Firebase Auth), create/e
 ### How requests are served in production
 - `wrangler.jsonc` points `main` at `worker/index.ts` and enables SPA-friendly asset behavior:
   - `assets.not_found_handling = "single-page-application"` means unknown asset paths fall back to the SPA entry (so client-side routing works when deployed).
-- Bindings: D1 (`DB`), Queues (`ANALYSIS_QUEUE`), AI (`AI`, `remote: true`), plus vars like `FIREBASE_PROJECT_ID` / `AI_TAGGER_MODEL`.
+- Bindings: D1 (`DB`), Queues (`ANALYSIS_QUEUE`), AI (`AI`, `remote: true`), plus vars like `FIREBASE_PROJECT_ID` / `AI_TAGGER_MODEL` / `AI_THERAPY_MODEL`.
 - Note: Workers AI uses the `AI` binding (Wrangler login for local remote calls). Do not require `CLOUDFLARE_API_TOKEN` for tagging/mood.
+- Therapy analysis (`/api/therapy-reports/*`) streams `@cf/moonshotai/kimi-k2.6` with thinking **enabled**; tagging/mood keep thinking disabled on GLM.
 
 ### Tooling and configuration that tie it together
 - Vite config (`vite.config.ts`) uses:

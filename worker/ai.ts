@@ -1,6 +1,7 @@
 export const DEFAULT_AI_MODEL = '@cf/zai-org/glm-4.7-flash' as const
+export const DEFAULT_THERAPY_AI_MODEL = '@cf/moonshotai/kimi-k2.6' as const
 
-type RoleMessage = { role: 'system' | 'user' | 'assistant'; content: string }
+export type RoleMessage = { role: 'system' | 'user' | 'assistant'; content: string }
 
 type ChatMessageOut = {
   content?: string | null | Array<{ type?: string; text?: string }>
@@ -25,6 +26,13 @@ export function chatTemplateKwargsForModel(model: string): Record<string, unknow
   return undefined
 }
 
+/** Enable model thinking (therapy analysis, etc.). */
+export function chatTemplateKwargsThinkingOn(model: string): Record<string, unknown> | undefined {
+  if (isKimiModel(model)) return { thinking: true }
+  if (isGlmModel(model)) return { thinking: { type: 'enabled' } }
+  return undefined
+}
+
 /**
  * Run a Workers AI text model via the `AI` binding (no API token required).
  * Locally, `remote: true` on the binding uses your Wrangler login.
@@ -42,6 +50,217 @@ export async function runWorkersAi(env: Env, model: string, messages: RoleMessag
     response_format: { type: 'json_object' },
     ...(templateKwargs ? { chat_template_kwargs: templateKwargs } : {}),
   })
+}
+
+export type AiStreamDelta = {
+  type: 'reasoning' | 'content'
+  text: string
+}
+
+/**
+ * Stream a Workers AI chat completion with thinking enabled (no JSON response_format).
+ * Yields reasoning/content text deltas as the model produces them.
+ *
+ * IMPORTANT: Cloudflare returns a ReadableStream that is *also* async-iterable.
+ * Iterating it directly yields Uint8Array SSE fragments — not JSON objects.
+ * Always decode via getReader() first.
+ */
+export async function* runWorkersAiStream(
+  env: Env,
+  model: string,
+  messages: RoleMessage[],
+): AsyncGenerator<AiStreamDelta> {
+  if (!env.AI) {
+    throw new Error('AI binding is not configured')
+  }
+
+  const templateKwargs = chatTemplateKwargsThinkingOn(model)
+
+  console.log('[ai.stream] start', { model, messageCount: messages.length })
+
+  const raw = await env.AI.run(model as keyof AiModels, {
+    messages,
+    stream: true,
+    ...(templateKwargs ? { chat_template_kwargs: templateKwargs } : {}),
+  })
+
+  const meta = {
+    typeof: typeof raw,
+    ctor: raw?.constructor?.name ?? null,
+    isAsyncIterable: isAsyncIterable(raw),
+    hasGetReader: raw != null && typeof raw === 'object' && 'getReader' in (raw as object),
+  }
+  console.log('[ai.stream] binding returned', meta)
+
+  // Prefer byte/SSE ReadableStream decoding (even when the stream is also async-iterable).
+  if (raw && typeof raw === 'object' && 'getReader' in (raw as object)) {
+    const reader = (raw as ReadableStream<Uint8Array>).getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    let byteChunks = 0
+    let yielded = 0
+    try {
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        byteChunks += 1
+        const piece =
+          typeof value === 'string'
+            ? value
+            : value instanceof Uint8Array
+              ? decoder.decode(value, { stream: true })
+              : value && typeof value === 'object' && ArrayBuffer.isView(value)
+                ? decoder.decode(value as ArrayBufferView, { stream: true })
+                : ''
+        if (!piece) {
+          // Object chunks (rare): try as structured deltas.
+          if (value && typeof value === 'object' && !(value instanceof Uint8Array)) {
+            for (const d of deltasFromChunk(value)) {
+              yielded += 1
+              yield d
+            }
+          }
+          continue
+        }
+        buffer += piece
+        const parts = buffer.split('\n')
+        buffer = parts.pop() ?? ''
+        for (const line of parts) {
+          for (const d of deltasFromSseLine(line)) {
+            yielded += 1
+            yield d
+          }
+        }
+      }
+      buffer += decoder.decode()
+      if (buffer.trim()) {
+        for (const line of buffer.split('\n')) {
+          for (const d of deltasFromSseLine(line)) {
+            yielded += 1
+            yield d
+          }
+        }
+      }
+    } finally {
+      try {
+        reader.releaseLock()
+      } catch {
+        // ignore
+      }
+    }
+    console.log('[ai.stream] readable complete', { byteChunks, yielded })
+    return
+  }
+
+  if (isAsyncIterable(raw)) {
+    let n = 0
+    let yielded = 0
+    for await (const chunk of raw as AsyncIterable<unknown>) {
+      n += 1
+      if (chunk instanceof Uint8Array) {
+        const text = new TextDecoder().decode(chunk)
+        for (const line of text.split('\n')) {
+          for (const d of deltasFromSseLine(line)) {
+            yielded += 1
+            yield d
+          }
+        }
+        continue
+      }
+      for (const d of deltasFromChunk(chunk)) {
+        yielded += 1
+        yield d
+      }
+    }
+    console.log('[ai.stream] asyncIterable complete', { chunks: n, yielded })
+    return
+  }
+
+  // Non-streaming fallback: emit full text once.
+  console.log('[ai.stream] non-stream fallback')
+  const text = extractAiOutputText(raw)
+  if (text) yield { type: 'content', text }
+}
+
+function isAsyncIterable(v: unknown): v is AsyncIterable<unknown> {
+  return v != null && typeof v === 'object' && Symbol.asyncIterator in (v as object)
+}
+
+function* deltasFromSseLine(line: string): Generator<AiStreamDelta> {
+  const trimmed = line.trim()
+  if (!trimmed || trimmed === 'data: [DONE]') return
+  const payload = trimmed.startsWith('data:') ? trimmed.slice(5).trim() : trimmed
+  if (!payload || payload === '[DONE]') return
+  try {
+    const json = JSON.parse(payload) as unknown
+    yield* deltasFromChunk(json)
+  } catch {
+    // ignore non-JSON keepalives / partial lines
+  }
+}
+
+/** Test helper: parse one SSE `data:` line into deltas. */
+export function parseWorkersAiSseDataLine(line: string): AiStreamDelta[] {
+  return [...deltasFromSseLine(line)]
+}
+
+function* deltasFromChunk(chunk: unknown): Generator<AiStreamDelta> {
+  if (chunk == null) return
+
+  if (typeof chunk === 'string') {
+    if (chunk.trim()) yield { type: 'content', text: chunk }
+    return
+  }
+
+  if (typeof chunk !== 'object') return
+
+  const o = chunk as {
+    response?: unknown
+    output_text?: unknown
+    choices?: Array<{
+      delta?: {
+        content?: unknown
+        reasoning?: unknown
+        reasoning_content?: unknown
+      }
+      message?: ChatMessageOut | null
+    }>
+  }
+
+  const delta = o.choices?.[0]?.delta
+  if (delta) {
+    const reasoning =
+      (typeof delta.reasoning === 'string' && delta.reasoning) ||
+      (typeof delta.reasoning_content === 'string' && delta.reasoning_content) ||
+      ''
+    if (reasoning) yield { type: 'reasoning', text: reasoning }
+
+    const content =
+      typeof delta.content === 'string'
+        ? delta.content
+        : textFromContentParts(delta.content)
+    if (content) yield { type: 'content', text: content }
+    return
+  }
+
+  const msg = o.choices?.[0]?.message
+  if (msg) {
+    const reasoning =
+      (typeof msg.reasoning === 'string' && msg.reasoning) ||
+      (typeof msg.reasoning_content === 'string' && msg.reasoning_content) ||
+      ''
+    if (reasoning) yield { type: 'reasoning', text: reasoning }
+    const content = textFromContentParts(msg.content)
+    if (content) yield { type: 'content', text: content }
+    return
+  }
+
+  if (typeof o.response === 'string' && o.response) {
+    yield { type: 'content', text: o.response }
+  }
+  if (typeof o.output_text === 'string' && o.output_text) {
+    yield { type: 'content', text: o.output_text }
+  }
 }
 
 function textFromContentParts(content: unknown): string {

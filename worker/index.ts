@@ -24,14 +24,22 @@ import {
   upsertThoughtMood,
   getThoughtMoodByThoughtId,
   getThoughtMoodsForThoughtIds,
+  createTherapyReport,
+  getTherapyReportById,
+  listTherapyReports,
+  markTherapyReportDone,
+  markTherapyReportError,
+  updateTherapyReportProgress,
   type AnalysisJobRow,
   type AnalysisJobStatusSummaryRow,
 } from './db'
 import {
   DEFAULT_AI_MODEL,
+  DEFAULT_THERAPY_AI_MODEL,
   extractAiOutputText,
   parseJsonObjectFromAiText,
   runWorkersAi,
+  runWorkersAiStream,
 } from './ai'
 import {
   buildTaggerSystemPrompt,
@@ -40,6 +48,11 @@ import {
   type TaggingAiResult,
 } from './tagger'
 import { buildMoodSystemPrompt, buildMoodUserPrompt, type MoodAiResult } from './mood'
+import {
+  buildTherapyPreviewMeta,
+  packTherapyThoughts,
+  type TherapyThoughtInput,
+} from './therapyReport'
 
 // NOTE: The API exposes timestamps as Unix epoch seconds in UTC (matching the DB schema).
 // The frontend is responsible for converting these numeric seconds to local time for display.
@@ -161,6 +174,77 @@ export function utcRangeForLocalMonth(opts: { y: number; m: number; tzOffsetMinu
   const startMs = Date.UTC(y, m - 1, 1, 0, 0, 0) + tzOffsetMinutes * 60 * 1000
   const endMs = Date.UTC(y, m, 1, 0, 0, 0) + tzOffsetMinutes * 60 * 1000
   return { start: Math.floor(startMs / 1000), endExclusive: Math.floor(endMs / 1000) }
+}
+
+export function utcRangeForLocalDateSpan(opts: {
+  from: { y: number; m: number; d: number }
+  to: { y: number; m: number; d: number }
+  tzOffsetMinutes: number
+}): { start: number; endExclusive: number } {
+  const start = utcRangeForLocalDay({ ...opts.from, tzOffsetMinutes: opts.tzOffsetMinutes }).start
+  const endExclusive = utcRangeForLocalDay({ ...opts.to, tzOffsetMinutes: opts.tzOffsetMinutes }).endExclusive
+  return { start, endExclusive }
+}
+
+export function localDateKeyFromUtcSeconds(utcSeconds: number, tzOffsetMinutes: number): string {
+  // Invert the same offset convention as utcRangeForLocalDay (UTC = local + offset).
+  const localMs = utcSeconds * 1000 - tzOffsetMinutes * 60 * 1000
+  const d = new Date(localMs)
+  const y = d.getUTCFullYear()
+  const m = String(d.getUTCMonth() + 1).padStart(2, '0')
+  const day = String(d.getUTCDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
+function sseEncode(event: string, data: unknown): string {
+  return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`
+}
+
+async function loadTherapyThoughtsForRange(
+  env: Env,
+  uid: string,
+  from: { y: number; m: number; d: number; iso: string },
+  to: { y: number; m: number; d: number; iso: string },
+  tzOffsetMinutes: number,
+): Promise<TherapyThoughtInput[]> {
+  const range = utcRangeForLocalDateSpan({
+    from: { y: from.y, m: from.m, d: from.d },
+    to: { y: to.y, m: to.m, d: to.d },
+    tzOffsetMinutes,
+  })
+
+  if (range.endExclusive <= range.start) {
+    throw new Error('Invalid date range')
+  }
+
+  // Fetch newest-first with a high limit, then reverse to chronological for prompting.
+  const rows = await listThoughtsInCreatedAtRange(env, {
+    uid,
+    startCreatedAt: range.start,
+    endCreatedAtExclusive: range.endExclusive,
+    limit: 500,
+  })
+
+  const chronological = [...rows].reverse()
+  const ids = chronological.map((t) => t.id)
+  const [tagMap, moodMap] = await Promise.all([
+    getTagsForThoughtIds(env, ids),
+    getThoughtMoodsForThoughtIds(env, uid, ids),
+  ])
+
+  return chronological.map((t) => {
+    const moodRow = moodMap.get(t.id)
+    return {
+      id: t.id,
+      created_at: t.created_at,
+      body: t.body,
+      tags: tagMap.get(t.id) ?? [],
+      mood: moodRow
+        ? { score: moodRow.mood_score, explanation: moodRow.explanation }
+        : null,
+      localDate: localDateKeyFromUtcSeconds(t.created_at, tzOffsetMinutes),
+    }
+  })
 }
 
 export function parseIdsParam(ids: string | null): number[] {
@@ -501,6 +585,265 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
     }
 
     return json({ counts, avg_mood: avgMood })
+  }
+
+  // Therapy prep: preview stats for a local date range (no AI).
+  if (request.method === 'GET' && url.pathname === '/api/therapy-reports/preview') {
+    const from = parseIsoDateParam(url.searchParams.get('from'))
+    const to = parseIsoDateParam(url.searchParams.get('to'))
+    if (!from || !to) return err(400, 'from and to are required (YYYY-MM-DD)')
+    if (from.iso > to.iso) return err(400, 'from must be on or before to')
+
+    const tzOffsetMinutes = parseTzOffsetMinutesParam(url.searchParams.get('tz_offset_min'))
+
+    let thoughts: TherapyThoughtInput[]
+    try {
+      thoughts = await loadTherapyThoughtsForRange(env, auth.uid, from, to, tzOffsetMinutes)
+    } catch (e) {
+      return err(400, e instanceof Error ? e.message : 'Invalid range')
+    }
+
+    const pack = packTherapyThoughts({ from: from.iso, to: to.iso, thoughtsAsc: thoughts })
+    const meta = buildTherapyPreviewMeta(thoughts)
+    meta.truncated = pack.truncated
+    meta.thought_ids = pack.includedThoughtIds
+    meta.thought_count = thoughts.length
+
+    return json({
+      from: from.iso,
+      to: to.iso,
+      tz_offset_min: tzOffsetMinutes,
+      ...meta,
+      included_count: pack.thoughtCount,
+    })
+  }
+
+  // Therapy prep: list recent reports (for later history UI).
+  if (request.method === 'GET' && url.pathname === '/api/therapy-reports') {
+    const limitRaw = Number(url.searchParams.get('limit') ?? '20')
+    const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(50, Math.floor(limitRaw))) : 20
+    const reports = await listTherapyReports(env, auth.uid, limit)
+    return json({
+      reports: reports.map((r) => ({
+        id: r.id,
+        start_date: r.start_date,
+        end_date: r.end_date,
+        thought_count: r.thought_count,
+        model: r.model,
+        status: r.status,
+        created_at: r.created_at,
+        updated_at: r.updated_at,
+        error: r.error,
+      })),
+    })
+  }
+
+  const therapyReportMatch = url.pathname.match(/^\/api\/therapy-reports\/(\d+)$/)
+  if (therapyReportMatch && request.method === 'GET') {
+    const id = Number(therapyReportMatch[1])
+    try {
+      const report = await getTherapyReportById(env, auth.uid, id)
+      return json({ report })
+    } catch {
+      return err(404, 'Therapy report not found')
+    }
+  }
+
+  // Therapy prep: stream Kimi thinking + report over SSE, persist when done.
+  if (request.method === 'POST' && url.pathname === '/api/therapy-reports/stream') {
+    let body: unknown
+    try {
+      body = await request.json()
+    } catch {
+      return err(400, 'Invalid JSON')
+    }
+
+    const fromRaw =
+      typeof body === 'object' && body !== null && 'from' in body
+        ? String((body as { from?: unknown }).from ?? '')
+        : ''
+    const toRaw =
+      typeof body === 'object' && body !== null && 'to' in body
+        ? String((body as { to?: unknown }).to ?? '')
+        : ''
+    const from = parseIsoDateParam(fromRaw)
+    const to = parseIsoDateParam(toRaw)
+    if (!from || !to) return err(400, 'from and to are required (YYYY-MM-DD)')
+    if (from.iso > to.iso) return err(400, 'from must be on or before to')
+
+    const tzOffsetMinutes = parseTzOffsetMinutesParam(
+      typeof body === 'object' && body !== null && 'tz_offset_min' in body
+        ? String((body as { tz_offset_min?: unknown }).tz_offset_min ?? '0')
+        : '0',
+    )
+
+    let thoughts: TherapyThoughtInput[]
+    try {
+      thoughts = await loadTherapyThoughtsForRange(env, auth.uid, from, to, tzOffsetMinutes)
+    } catch (e) {
+      return err(400, e instanceof Error ? e.message : 'Invalid range')
+    }
+
+    if (thoughts.length === 0) {
+      return err(400, 'No thoughts in the selected date range')
+    }
+
+    const pack = packTherapyThoughts({ from: from.iso, to: to.iso, thoughtsAsc: thoughts })
+    const meta = buildTherapyPreviewMeta(thoughts)
+    meta.truncated = pack.truncated
+    meta.thought_ids = pack.includedThoughtIds
+
+    const model =
+      env.AI_THERAPY_MODEL || env.AI_TAGGER_MODEL || DEFAULT_THERAPY_AI_MODEL
+
+    const report = await createTherapyReport(env, {
+      uid: auth.uid,
+      startDate: from.iso,
+      endDate: to.iso,
+      tzOffsetMin: tzOffsetMinutes,
+      thoughtCount: thoughts.length,
+      model,
+      metaJson: JSON.stringify(meta),
+    })
+
+    const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>()
+    const writer = writable.getWriter()
+    const encoder = new TextEncoder()
+
+    const writeEvent = async (event: string, data: unknown) => {
+      await writer.write(encoder.encode(sseEncode(event, data)))
+    }
+
+    void (async () => {
+      let thinkingText = ''
+      let reportMarkdown = ''
+      let lastPersist = 0
+      let deltaCount = 0
+
+      try {
+        console.log('[therapy.stream] start', {
+          reportId: report.id,
+          model,
+          thoughtCount: thoughts.length,
+          included: pack.thoughtCount,
+          truncated: pack.truncated,
+          from: from.iso,
+          to: to.iso,
+        })
+
+        await writeEvent('meta', {
+          id: report.id,
+          from: from.iso,
+          to: to.iso,
+          model,
+          ...meta,
+          included_count: pack.thoughtCount,
+        })
+        await writeEvent('status', { phase: 'model_running' })
+
+        for await (const delta of runWorkersAiStream(env, model, [
+          { role: 'system', content: pack.system },
+          { role: 'user', content: pack.user },
+        ])) {
+          deltaCount += 1
+          if (delta.type === 'reasoning') {
+            thinkingText += delta.text
+            await writeEvent('thinking', { text: delta.text })
+          } else {
+            reportMarkdown += delta.text
+            await writeEvent('content', { text: delta.text })
+          }
+
+          const now = Date.now()
+          if (now - lastPersist > 2500) {
+            lastPersist = now
+            await updateTherapyReportProgress(env, {
+              uid: auth.uid,
+              id: report.id,
+              thinkingText,
+              reportMarkdown,
+            })
+            await writeEvent('status', {
+              phase: 'streaming',
+              thinking_chars: thinkingText.length,
+              content_chars: reportMarkdown.length,
+              deltas: deltaCount,
+            })
+          }
+        }
+
+        console.log('[therapy.stream] model finished', {
+          reportId: report.id,
+          deltaCount,
+          thinkingChars: thinkingText.length,
+          contentChars: reportMarkdown.length,
+        })
+
+        if (!reportMarkdown.trim() && thinkingText.trim()) {
+          // Some models park the answer in reasoning; keep what we have.
+          reportMarkdown = thinkingText
+        }
+
+        if (!reportMarkdown.trim() && !thinkingText.trim()) {
+          throw new Error(
+            `Model stream completed with no usable text (deltas=${deltaCount}). Check [ai.stream] logs for chunk parsing.`,
+          )
+        }
+
+        await markTherapyReportDone(env, {
+          uid: auth.uid,
+          id: report.id,
+          thinkingText,
+          reportMarkdown,
+        })
+        await writeEvent('done', {
+          id: report.id,
+          thinking_chars: thinkingText.length,
+          content_chars: reportMarkdown.length,
+          deltas: deltaCount,
+        })
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e)
+        console.error('[therapy.stream] failed', {
+          reportId: report.id,
+          message,
+          deltaCount,
+          thinkingChars: thinkingText.length,
+          contentChars: reportMarkdown.length,
+        })
+        try {
+          await markTherapyReportError(env, {
+            uid: auth.uid,
+            id: report.id,
+            error: message,
+            thinkingText,
+            reportMarkdown,
+          })
+        } catch {
+          // ignore
+        }
+        try {
+          await writeEvent('error', { error: message, id: report.id })
+        } catch {
+          // ignore
+        }
+      } finally {
+        try {
+          await writer.close()
+        } catch {
+          // ignore
+        }
+      }
+    })()
+
+    return new Response(readable, {
+      status: 200,
+      headers: {
+        'content-type': 'text/event-stream; charset=utf-8',
+        'cache-control': 'no-store, no-cache',
+        connection: 'keep-alive',
+      },
+    })
   }
 
   return err(404, 'Not found')

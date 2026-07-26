@@ -696,3 +696,147 @@ export async function getThoughtMoodsForThoughtIds(
 
   return out
 }
+
+export type TherapyReportStatus = 'running' | 'done' | 'error'
+
+export type TherapyReportRow = {
+  id: number
+  uid: string
+  start_date: string
+  end_date: string
+  tz_offset_min: number
+  thought_count: number
+  model: string | null
+  status: TherapyReportStatus
+  thinking_text: string | null
+  report_markdown: string | null
+  meta_json: string | null
+  error: string | null
+  created_at: number
+  updated_at: number
+}
+
+export async function createTherapyReport(env: Env, opts: {
+  uid: string
+  startDate: string
+  endDate: string
+  tzOffsetMin: number
+  thoughtCount: number
+  model: string
+  metaJson: string
+}): Promise<TherapyReportRow> {
+  const res = await env.DB.prepare(
+    `INSERT INTO therapy_reports(
+       uid, start_date, end_date, tz_offset_min, thought_count, model, status, meta_json, created_at, updated_at
+     ) VALUES (?, ?, ?, ?, ?, ?, 'running', ?, unixepoch(), unixepoch())`
+  )
+    .bind(
+      opts.uid,
+      opts.startDate,
+      opts.endDate,
+      opts.tzOffsetMin,
+      opts.thoughtCount,
+      opts.model,
+      opts.metaJson,
+    )
+    .run()
+
+  const id = Number(res.meta.last_row_id)
+  return await getTherapyReportById(env, opts.uid, id)
+}
+
+export async function getTherapyReportById(env: Env, uid: string, id: number): Promise<TherapyReportRow> {
+  const { results } = await env.DB.prepare(
+    `SELECT id, uid, start_date, end_date, tz_offset_min, thought_count, model, status,
+            thinking_text, report_markdown, meta_json, error, created_at, updated_at
+     FROM therapy_reports
+     WHERE id = ? AND uid = ?`
+  )
+    .bind(id, uid)
+    .all<TherapyReportRow>()
+
+  const row = results[0]
+  if (!row) throw new Error('Therapy report not found')
+  return row
+}
+
+export async function listTherapyReports(
+  env: Env,
+  uid: string,
+  limit: number,
+): Promise<TherapyReportRow[]> {
+  const { results } = await env.DB.prepare(
+    `SELECT id, uid, start_date, end_date, tz_offset_min, thought_count, model, status,
+            thinking_text, report_markdown, meta_json, error, created_at, updated_at
+     FROM therapy_reports
+     WHERE uid = ?
+     ORDER BY created_at DESC, id DESC
+     LIMIT ?`
+  )
+    .bind(uid, limit)
+    .all<TherapyReportRow>()
+
+  return results
+}
+
+export async function updateTherapyReportProgress(env: Env, opts: {
+  uid: string
+  id: number
+  thinkingText?: string
+  reportMarkdown?: string
+}): Promise<void> {
+  await env.DB.prepare(
+    `UPDATE therapy_reports
+     SET thinking_text = COALESCE(?, thinking_text),
+         report_markdown = COALESCE(?, report_markdown),
+         updated_at = unixepoch()
+     WHERE id = ? AND uid = ?`
+  )
+    .bind(opts.thinkingText ?? null, opts.reportMarkdown ?? null, opts.id, opts.uid)
+    .run()
+}
+
+export async function markTherapyReportDone(env: Env, opts: {
+  uid: string
+  id: number
+  thinkingText: string
+  reportMarkdown: string
+}): Promise<void> {
+  await env.DB.prepare(
+    `UPDATE therapy_reports
+     SET status = 'done',
+         thinking_text = ?,
+         report_markdown = ?,
+         error = NULL,
+         updated_at = unixepoch()
+     WHERE id = ? AND uid = ?`
+  )
+    .bind(opts.thinkingText, opts.reportMarkdown, opts.id, opts.uid)
+    .run()
+}
+
+export async function markTherapyReportError(env: Env, opts: {
+  uid: string
+  id: number
+  error: string
+  thinkingText?: string
+  reportMarkdown?: string
+}): Promise<void> {
+  await env.DB.prepare(
+    `UPDATE therapy_reports
+     SET status = 'error',
+         error = ?,
+         thinking_text = COALESCE(?, thinking_text),
+         report_markdown = COALESCE(?, report_markdown),
+         updated_at = unixepoch()
+     WHERE id = ? AND uid = ?`
+  )
+    .bind(
+      opts.error,
+      opts.thinkingText ?? null,
+      opts.reportMarkdown ?? null,
+      opts.id,
+      opts.uid,
+    )
+    .run()
+}

@@ -21,7 +21,8 @@
 	},
 	"vars": {
 		"FIREBASE_PROJECT_ID": "brainiac-c9e97",
-		"AI_TAGGER_MODEL": "@cf/zai-org/glm-4.7-flash"
+		"AI_TAGGER_MODEL": "@cf/zai-org/glm-4.7-flash",
+		"AI_THERAPY_MODEL": "@cf/moonshotai/kimi-k2.6"
 	},
 	"d1_databases": [
 		{

@@ -9,6 +9,8 @@ import {
   parseTzOffsetMinutesParam,
   utcRangeForLocalDay,
   utcRangeForLocalMonth,
+  utcRangeForLocalDateSpan,
+  localDateKeyFromUtcSeconds,
 } from './index'
 
 describe('summarizeJobs', () => {
@@ -192,5 +194,21 @@ describe('utcRangeForLocalDay and utcRangeForLocalMonth', () => {
     })
     expect(startWithOffset).toBe(Math.floor((janStart + 180 * 60 * 1000) / 1000))
     expect(endWithOffset).toBe(Math.floor((febStart + 180 * 60 * 1000) / 1000))
+  })
+
+  it('spans inclusive local from→to days via utcRangeForLocalDateSpan', () => {
+    const { start, endExclusive } = utcRangeForLocalDateSpan({
+      from: { y: 2024, m: 1, d: 15 },
+      to: { y: 2024, m: 1, d: 16 },
+      tzOffsetMinutes: 0,
+    })
+    expect(endExclusive - start).toBe(2 * 24 * 60 * 60)
+  })
+
+  it('maps utc seconds back to local date keys', () => {
+    const noonUtc = Math.floor(Date.UTC(2024, 0, 15, 12, 0, 0) / 1000)
+    expect(localDateKeyFromUtcSeconds(noonUtc, 0)).toBe('2024-01-15')
+    // +480 offset means local = UTC-8; noon UTC → 04:00 local same day
+    expect(localDateKeyFromUtcSeconds(noonUtc, 480)).toBe('2024-01-15')
   })
 })

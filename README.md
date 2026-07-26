@@ -7,6 +7,7 @@ A tiny thought-capture app.
 - Async analysis: Cloudflare Queues
 - Auth: Google sign-in via Firebase Auth
 - AI tagging: Cloudflare AI (default model `@cf/zai-org/glm-4.7-flash`)
+- Therapy prep analysis: Cloudflare AI (default model `@cf/moonshotai/kimi-k2.6`, thinking streamed)
 
 ## Features (current)
 - Sign in with Google.
@@ -16,6 +17,7 @@ A tiny thought-capture app.
 - Filter thoughts by AND’ing tags.
 - Edit / soft-delete thoughts.
 - On create/edit, a tagging job is enqueued; the tagger considers existing tags and current tags.
+- Generate a therapy-prep analysis report over a date range (sidebar **Analysis** → `/analysis`), with streamed model thinking.
 
 ## Local development
 ### 1) Install
