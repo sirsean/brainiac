@@ -53,8 +53,19 @@ wrangler d1 create brainiac
 
 Apply migrations locally:
 ```bash
-wrangler d1 migrations apply brainiac --local
+npm run db:local
+# or: wrangler d1 migrations apply brainiac --local
 ```
+
+### Sync production → local
+To develop against a copy of production data (overwrites local D1):
+```bash
+npm run db:pull
+# non-interactive:
+npm run db:pull -- --yes
+```
+
+Requires Wrangler auth (`npx wrangler login`). Restart `npm run dev` afterward.
 
 Apply migrations to production:
 ```bash

@@ -12,7 +12,9 @@
 		"cf-typegen": "wrangler types",
 		"test": "vitest",
 		"test:run": "vitest run",
-		"test:watch": "vitest"
+		"test:watch": "vitest",
+		"db:local": "wrangler d1 migrations apply brainiac --local",
+		"db:pull": "node scripts/db-pull-remote.mjs"
 	},
 	"dependencies": {
 		"@tailwindcss/vite": "^4.1.18",

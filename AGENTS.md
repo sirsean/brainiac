@@ -81,4 +81,5 @@ Brainiac is a tiny thought-capture app: Google sign-in (Firebase Auth), create/e
 ## Repo-specific workflow rules
 - Do not run `git commit` unless the user explicitly asks for it; keep changes ready for review instead.
 - Prefer `npm run dev` over `wrangler dev` for local work.
+- To overwrite local D1 with production data: `npm run db:pull` (or `npm run db:pull -- --yes`).
 - Human-oriented setup (Firebase, D1, queues, env files) lives in `README.md`; keep agent guidance here focused on commands, architecture, and working conventions.
