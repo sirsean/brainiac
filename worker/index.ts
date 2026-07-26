@@ -27,7 +27,12 @@ import {
   type AnalysisJobRow,
   type AnalysisJobStatusSummaryRow,
 } from './db'
-import { CloudflareAiApiClient, extractAiOutputText } from './cloudflareAiApiClient'
+import {
+  DEFAULT_AI_MODEL,
+  extractAiOutputText,
+  parseJsonObjectFromAiText,
+  runWorkersAi,
+} from './ai'
 import {
   buildTaggerSystemPrompt,
   buildTaggerUserPrompt,
@@ -501,23 +506,6 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
   return err(404, 'Not found')
 }
 
-async function runTaggerAi(env: Env, model: string, input: unknown): Promise<unknown> {
-  if (!env.CLOUDFLARE_ACCOUNT_ID) {
-    throw new Error('CLOUDFLARE_ACCOUNT_ID is not configured')
-  }
-  if (!env.CLOUDFLARE_API_TOKEN) {
-    throw new Error('CLOUDFLARE_API_TOKEN is not configured')
-  }
-
-  const client = new CloudflareAiApiClient({
-    accountId: env.CLOUDFLARE_ACCOUNT_ID,
-    apiToken: env.CLOUDFLARE_API_TOKEN,
-    baseUrl: env.CLOUDFLARE_AI_BASE_URL,
-  })
-
-  return await client.run(model, input)
-}
-
 async function processTaggingJob(env: Env, job: AnalysisJobRow): Promise<void> {
   if (job.step !== 'tagging') return
   if (job.status === 'done') return
@@ -537,23 +525,14 @@ async function processTaggingJob(env: Env, job: AnalysisJobRow): Promise<void> {
   const system = buildTaggerSystemPrompt()
   const user = buildTaggerUserPrompt({ thought: thought.body, existingTags, currentTags })
 
-  const model = env.AI_TAGGER_MODEL || '@cf/openai/gpt-oss-20b'
+  const model = env.AI_TAGGER_MODEL || DEFAULT_AI_MODEL
 
-  // Minimal Responses-style payload. We'll add format/options back once we confirm this works.
-  const aiInput = {
-    instructions: system,
-    input: user,
-  }
-
-  const aiOut = await runTaggerAi(env, model, aiInput)
+  const aiOut = await runWorkersAi(env, model, [
+    { role: 'system', content: system },
+    { role: 'user', content: user },
+  ])
   const outputText = extractAiOutputText(aiOut)
-
-  let parsed: TaggingAiResult
-  try {
-    parsed = JSON.parse(outputText) as TaggingAiResult
-  } catch {
-    throw new Error('AI returned non-JSON output')
-  }
+  const parsed = parseJsonObjectFromAiText(outputText) as TaggingAiResult
 
   const { valid, invalid } = normalizeAndValidateTags(parsed.tags)
 
@@ -585,22 +564,14 @@ async function processMoodJob(env: Env, job: AnalysisJobRow): Promise<void> {
   const system = buildMoodSystemPrompt()
   const user = buildMoodUserPrompt({ thought: thought.body })
 
-  const model = env.AI_MOOD_MODEL || env.AI_TAGGER_MODEL || '@cf/openai/gpt-oss-20b'
+  const model = env.AI_MOOD_MODEL || env.AI_TAGGER_MODEL || DEFAULT_AI_MODEL
 
-  const aiInput = {
-    instructions: system,
-    input: user,
-  }
-
-  const aiOut = await runTaggerAi(env, model, aiInput)
+  const aiOut = await runWorkersAi(env, model, [
+    { role: 'system', content: system },
+    { role: 'user', content: user },
+  ])
   const outputText = extractAiOutputText(aiOut)
-
-  let parsed: MoodAiResult
-  try {
-    parsed = JSON.parse(outputText) as MoodAiResult
-  } catch {
-    throw new Error('AI returned non-JSON mood output')
-  }
+  const parsed = parseJsonObjectFromAiText(outputText) as MoodAiResult
 
   const score = Number(parsed.mood_score)
   if (!Number.isFinite(score) || !Number.isInteger(score) || score < 1 || score > 5) {

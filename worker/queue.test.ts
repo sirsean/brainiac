@@ -42,35 +42,16 @@ vi.mock('./auth', () => authMocks)
 import handler from './index'
 
 function makeEnv(aiOutputText: string): Env {
-  const fetchMock = vi.fn(async () => {
-    return new Response(
-      JSON.stringify({
-        object: 'response',
-        output: [
-          {
-            type: 'message',
-            role: 'assistant',
-            content: [{ type: 'output_text', text: aiOutputText }],
-          },
-        ],
-      }),
-      {
-        status: 200,
-        headers: { 'content-type': 'application/json' },
-      },
-    )
-  })
-
-  vi.stubGlobal('fetch', fetchMock)
-
   return {
     FIREBASE_PROJECT_ID: 'proj',
-    AI_TAGGER_MODEL: '@cf/openai/gpt-oss-20b',
-    CLOUDFLARE_ACCOUNT_ID: 'acct',
-    CLOUDFLARE_API_TOKEN: 'tok',
+    AI_TAGGER_MODEL: '@cf/zai-org/glm-4.7-flash',
     DB: {} as unknown as D1Database,
     ANALYSIS_QUEUE: { send: async () => undefined } as unknown as Queue,
-    AI: {} as unknown as Ai,
+    AI: {
+      run: vi.fn(async () => ({
+        choices: [{ message: { content: aiOutputText } }],
+      })),
+    } as unknown as Ai,
   }
 }
 
@@ -249,7 +230,7 @@ describe('Worker queue consumer', () => {
       thoughtId: 3,
       moodScore: 4,
       explanation: 'Feels generally positive.',
-      model: '@cf/openai/gpt-oss-20b',
+      model: '@cf/zai-org/glm-4.7-flash',
     })
 
     expect(dbMocks.markJobDone).toHaveBeenCalledWith(

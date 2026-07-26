@@ -70,8 +70,8 @@ import handler from './index'
 function makeEnv(): Env {
   return {
     FIREBASE_PROJECT_ID: 'proj',
-    AI_TAGGER_MODEL: '@cf/openai/gpt-oss-20b',
-    AI_MOOD_MODEL: '@cf/openai/gpt-oss-20b',
+    AI_TAGGER_MODEL: '@cf/zai-org/glm-4.7-flash',
+    AI_MOOD_MODEL: '@cf/zai-org/glm-4.7-flash',
     DB: {} as unknown as D1Database,
     ANALYSIS_QUEUE: {
       send: vi.fn(async () => undefined),

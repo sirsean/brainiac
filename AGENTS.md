@@ -44,7 +44,7 @@ Brainiac is a tiny thought-capture app: Google sign-in (Firebase Auth), create/e
   - Entry point: `worker/index.ts` exports an `ExportedHandler<Env>` with both `fetch` (HTTP API) and `queue` (analysis consumer).
   - Auth: `worker/auth.ts` verifies Firebase ID tokens (`jose`); `ensureUser` upserts into D1.
   - Persistence: `worker/db.ts` (D1/SQLite). Schema lives in `migrations/`.
-  - AI: `worker/tagger.ts` + `worker/mood.ts` via `worker/cloudflareAiApiClient.ts` (Workers AI REST API).
+  - AI: `worker/tagger.ts` + `worker/mood.ts` via `worker/ai.ts` (`env.AI.run` Workers AI binding; no API token).
   - Routing: paths under `/api/` are handled by the Worker; everything else returns 404 from Worker code (static SPA assets are served via Wrangler assets / Vite in local dev).
 
 ### Key API surface (`/api/…`, all auth-required)
@@ -63,6 +63,7 @@ Brainiac is a tiny thought-capture app: Google sign-in (Firebase Auth), create/e
 - `wrangler.jsonc` points `main` at `worker/index.ts` and enables SPA-friendly asset behavior:
   - `assets.not_found_handling = "single-page-application"` means unknown asset paths fall back to the SPA entry (so client-side routing works when deployed).
 - Bindings: D1 (`DB`), Queues (`ANALYSIS_QUEUE`), AI (`AI`, `remote: true`), plus vars like `FIREBASE_PROJECT_ID` / `AI_TAGGER_MODEL`.
+- Note: Workers AI uses the `AI` binding (Wrangler login for local remote calls). Do not require `CLOUDFLARE_API_TOKEN` for tagging/mood.
 
 ### Tooling and configuration that tie it together
 - Vite config (`vite.config.ts`) uses:

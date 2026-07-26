@@ -6,9 +6,7 @@ import handler from './index'
 
 const env = {
   FIREBASE_PROJECT_ID: 'test',
-  AI_TAGGER_MODEL: '@cf/openai/gpt-oss-20b',
-  CLOUDFLARE_ACCOUNT_ID: 'acct',
-  CLOUDFLARE_API_TOKEN: 'tok',
+  AI_TAGGER_MODEL: '@cf/zai-org/glm-4.7-flash',
   DB: {} as unknown as D1Database,
   ANALYSIS_QUEUE: { send: async () => undefined } as unknown as Queue,
   AI: {} as unknown as Ai,

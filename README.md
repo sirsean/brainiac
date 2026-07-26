@@ -6,7 +6,7 @@ A tiny thought-capture app.
 - Storage: Cloudflare D1 (SQLite)
 - Async analysis: Cloudflare Queues
 - Auth: Google sign-in via Firebase Auth
-- AI tagging: Cloudflare AI (default model `@cf/openai/gpt-oss-20b`)
+- AI tagging: Cloudflare AI (default model `@cf/zai-org/glm-4.7-flash`)
 
 ## Features (current)
 - Sign in with Google.
@@ -37,13 +37,9 @@ VITE_FIREBASE_APP_ID=...
 ```
 
 ### 3) Worker env vars
-The Worker needs the Firebase project id to verify ID tokens.
+The Worker needs the Firebase project id to verify ID tokens. That is already set in `wrangler.jsonc` `vars` for this project.
 
-For local dev, create a `.dev.vars` file:
-```bash
-FIREBASE_PROJECT_ID=your-firebase-project-id
-AI_TAGGER_MODEL=@cf/openai/gpt-oss-20b
-```
+Optional local overrides go in `.dev.vars` (e.g. `AI_TAGGER_MODEL`). AI tagging/mood uses the Workers AI binding (`AI` with `remote: true`) — no Cloudflare API token is required. Local AI calls use your Wrangler login (`npx wrangler login` if needed).
 
 For deployed environments, set `FIREBASE_PROJECT_ID` via `wrangler.jsonc` vars or Wrangler secrets/vars.
 
