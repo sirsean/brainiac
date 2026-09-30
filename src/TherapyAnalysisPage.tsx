@@ -38,6 +38,7 @@ type HistoryItem = {
 }
 
 type TherapyReportDetail = {
+  model?: string | null
   id: number
   start_date: string
   end_date: string
@@ -113,6 +114,7 @@ export function TherapyAnalysisPage(props: TherapyAnalysisPageProps) {
   const [preview, setPreview] = useState<PreviewMeta | null>(null)
   const [previewBusy, setPreviewBusy] = useState(false)
   const [thinking, setThinking] = useState('')
+  const [legacyThinking, setLegacyThinking] = useState(false)
   const [content, setContent] = useState('')
   const [reportId, setReportId] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -263,6 +265,7 @@ export function TherapyAnalysisPage(props: TherapyAnalysisPageProps) {
         setMonth(monthKeyFromDateKey(report.end_date))
         setReportId(report.id)
         setThinking(report.thinking_text ?? '')
+        setLegacyThinking(Boolean(report.model?.startsWith('@cf/')))
         setContent(report.report_markdown ?? '')
         setStreamMeta(parseReportMeta(report.meta_json, report.thought_count))
         setStatusNote(
@@ -291,6 +294,7 @@ export function TherapyAnalysisPage(props: TherapyAnalysisPageProps) {
     if (!rangeStart || !rangeEnd) return
     setPhase('running')
     setThinking('')
+    setLegacyThinking(false)
     setContent('')
     setError(null)
     setReportId(null)
@@ -367,7 +371,7 @@ export function TherapyAnalysisPage(props: TherapyAnalysisPageProps) {
           console.info('[therapy.ui] status', d)
           if (d.phase === 'streaming') {
             setStatusNote(
-              `Streaming… thinking ${d.thinking_chars ?? 0} chars · report ${d.content_chars ?? 0} chars`,
+              `Streaming… summary ${d.thinking_chars ?? 0} chars · report ${d.content_chars ?? 0} chars`,
             )
           } else if (d.phase === 'model_running') {
             setStatusNote('Waiting on model tokens…')
@@ -434,16 +438,10 @@ export function TherapyAnalysisPage(props: TherapyAnalysisPageProps) {
           thinkingChars: thinkingAcc.length,
           contentChars: contentAcc.length,
         })
-        if (contentAcc.trim() || thinkingAcc.trim()) {
-          setPhase('done')
-          setStatusNote('Complete')
-          void loadHistory()
-        } else {
-          setError((prev) => prev ?? 'Stream ended without a report')
-          setPhase('error')
-          setStatusNote(null)
-          void loadHistory()
-        }
+        setError('Stream ended before the report completed')
+        setPhase('error')
+        setStatusNote(null)
+        void loadHistory()
       }
     } catch (e) {
       console.error('[therapy.ui] generate failed', e)
@@ -453,6 +451,19 @@ export function TherapyAnalysisPage(props: TherapyAnalysisPageProps) {
       void loadHistory()
     }
   }
+
+  function backToReports() {
+    setPhase('range')
+    setContent('')
+    setThinking('')
+    setStreamMeta(null)
+    setReportId(null)
+    setStatusNote(null)
+    setError(null)
+    onReports()
+  }
+
+  const viewingReport = selectedReportId != null || phase === 'done' || phase === 'error'
 
   const meta = streamMeta ?? preview
   const canGenerate = Boolean(rangeStart && rangeEnd && (preview?.thought_count ?? 0) > 0 && phase === 'range')
@@ -468,8 +479,8 @@ export function TherapyAnalysisPage(props: TherapyAnalysisPageProps) {
         </div>
         <button
           type="button"
-          onClick={onBack}
-          aria-label="Back to thoughts"
+          onClick={viewingReport ? backToReports : onBack}
+          aria-label={viewingReport ? 'Back to analysis' : 'Back to thoughts'}
           className="rounded border border-amber-400/50 bg-black/60 px-3 py-1.5 text-[0.7rem] uppercase tracking-[0.18em] text-amber-200 hover:border-amber-300 hover:bg-amber-500/10"
         >
           Back
@@ -665,6 +676,20 @@ export function TherapyAnalysisPage(props: TherapyAnalysisPageProps) {
             </div>
           ) : null}
 
+          {phase === 'running' && !content ? (
+            <div role="status" aria-live="polite" className="flex min-h-48 flex-col items-center justify-center gap-5 rounded-lg border border-amber-400/30 bg-black/60 p-6 shadow-[inset_0_0_40px_rgba(245,158,11,0.04)]">
+              <div className="analysis-loader" aria-hidden="true">
+                <span className="analysis-loader__outer" />
+                <span className="analysis-loader__inner" />
+                <span className="analysis-loader__core" />
+              </div>
+              <div className="space-y-2 text-center">
+                <div className="text-xs uppercase tracking-[0.25em] text-amber-200">Analyzing your thoughts</div>
+                <div className="text-[0.7rem] text-amber-200/60">Preparing your therapy report…</div>
+              </div>
+            </div>
+          ) : null}
+
           <div className="flex flex-col gap-3">
             {content ? (
               <div className="flex flex-col rounded-lg border border-amber-400/40 bg-black/60 shadow-[0_0_24px_rgba(250,204,21,0.12)]">
@@ -678,14 +703,14 @@ export function TherapyAnalysisPage(props: TherapyAnalysisPageProps) {
               </div>
             ) : null}
 
-            <div className="flex flex-col rounded-lg border border-amber-400/25 bg-black/60">
+            {thinking ? <div className="flex flex-col rounded-lg border border-amber-400/25 bg-black/60">
               <div className="border-b border-amber-400/20 px-3 py-2 text-[0.65rem] uppercase tracking-[0.2em] text-amber-300/70">
-                Thinking
+                {legacyThinking ? 'Thinking' : 'Reasoning summary'}
               </div>
               <pre className="whitespace-pre-wrap p-3 font-mono text-[0.7rem] leading-relaxed text-amber-200/75">
-                {thinking || (phase === 'running' ? '…' : '(none)')}
+                {thinking}
               </pre>
-            </div>
+            </div> : null}
           </div>
 
           {phase === 'error' && error ? <div className="error">Error: {error}</div> : null}
@@ -694,7 +719,7 @@ export function TherapyAnalysisPage(props: TherapyAnalysisPageProps) {
             <div className="flex flex-wrap gap-2">
               <button
                 type="button"
-                onClick={onReports}
+                onClick={backToReports}
                 className="rounded border border-amber-400/50 bg-black/50 px-3 py-1.5 text-[0.7rem] uppercase tracking-[0.18em] text-amber-200 hover:bg-amber-500/10"
               >
                 Back to reports

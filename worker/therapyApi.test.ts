@@ -43,12 +43,9 @@ const authMocks = vi.hoisted(() => ({
 }))
 
 const aiMocks = vi.hoisted(() => ({
-  runWorkersAi: vi.fn(),
-  runWorkersAiStream: vi.fn(),
-  extractAiOutputText: vi.fn(),
-  parseJsonObjectFromAiText: vi.fn(),
-  DEFAULT_AI_MODEL: '@cf/zai-org/glm-4.7-flash',
-  DEFAULT_THERAPY_AI_MODEL: '@cf/moonshotai/kimi-k2.6',
+  runAiJson: vi.fn(),
+  runAiStream: vi.fn(),
+  AI_MODEL: 'gpt-6-luna',
 }))
 
 vi.mock('./db', () => dbMocks)
@@ -60,11 +57,9 @@ import handler from './index'
 function makeEnv(): Env {
   return {
     FIREBASE_PROJECT_ID: 'proj',
-    AI_TAGGER_MODEL: '@cf/zai-org/glm-4.7-flash',
-    AI_THERAPY_MODEL: '@cf/moonshotai/kimi-k2.6',
+    OPENAI_API_KEY: 'test-key',
     DB: {} as unknown as D1Database,
     ANALYSIS_QUEUE: { send: async () => undefined } as unknown as Queue,
-    AI: { run: vi.fn() } as unknown as Ai,
   } as unknown as Env
 }
 
@@ -104,7 +99,7 @@ describe('therapy reports API', () => {
     expect(body.thought_count).toBe(0)
   })
 
-  it('stream writes SSE events and marks report done', async () => {
+  it.each(['success', 'interrupted', 'summary-only'])('persists streamed report outcome: %s', async (outcome) => {
     dbMocks.listThoughtsInCreatedAtRange.mockResolvedValue([
       {
         id: 1,
@@ -142,7 +137,7 @@ describe('therapy reports API', () => {
       end_date: '2026-07-07',
       tz_offset_min: 0,
       thought_count: 1,
-      model: '@cf/moonshotai/kimi-k2.6',
+      model: 'gpt-6-luna',
       status: 'running',
       thinking_text: null,
       report_markdown: null,
@@ -152,9 +147,10 @@ describe('therapy reports API', () => {
       updated_at: 1,
     })
 
-    aiMocks.runWorkersAiStream.mockImplementation(async function* () {
+    aiMocks.runAiStream.mockImplementation(async function* () {
       yield { type: 'reasoning', text: 'considering…' }
-      yield { type: 'content', text: '## What has been on your mind\nHello' }
+      if (outcome !== 'summary-only') yield { type: 'content', text: '## What has been on your mind\nHello' }
+      if (outcome === 'interrupted') throw new Error('AI stream ended before completion')
     })
 
     const res = await handler.fetch!(
@@ -173,11 +169,20 @@ describe('therapy reports API', () => {
     expect(text).toContain('event: meta')
     expect(text).toContain('event: thinking')
     expect(text).toContain('considering')
-    expect(text).toContain('event: content')
-    expect(text).toContain('event: done')
-
-    await vi.waitFor(() => {
-      expect(dbMocks.markTherapyReportDone).toHaveBeenCalled()
-    })
+    if (outcome === 'success') {
+      expect(text).toContain('event: content')
+      expect(text).toContain('event: done')
+      await vi.waitFor(() => expect(dbMocks.markTherapyReportDone).toHaveBeenCalled())
+      expect(dbMocks.markTherapyReportError).not.toHaveBeenCalled()
+    } else {
+      expect(text).toContain('event: error')
+      expect(text).not.toContain('event: done')
+      await vi.waitFor(() => expect(dbMocks.markTherapyReportError).toHaveBeenCalled())
+      expect(dbMocks.markTherapyReportDone).not.toHaveBeenCalled()
+      expect(dbMocks.markTherapyReportError).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+        thinkingText: 'considering…',
+        reportMarkdown: outcome === 'interrupted' ? '## What has been on your mind\nHello' : '',
+      }))
+    }
   })
 })

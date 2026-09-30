@@ -1,119 +1,75 @@
 // @vitest-environment node
-
-import { describe, expect, it, vi } from 'vitest'
-
-import {
-  DEFAULT_AI_MODEL,
-  extractAiOutputText,
-  isGlmModel,
-  isKimiModel,
-  parseJsonObjectFromAiText,
-  parseWorkersAiSseDataLine,
-  runWorkersAi,
-} from './ai'
-
-describe('model helpers', () => {
-  it('detects kimi and glm models', () => {
-    expect(isKimiModel('@cf/moonshotai/kimi-k2.6')).toBe(true)
-    expect(isGlmModel(DEFAULT_AI_MODEL)).toBe(true)
-    expect(isGlmModel('@cf/openai/gpt-oss-20b')).toBe(false)
-  })
-})
-
-describe('runWorkersAi', () => {
-  it('calls env.AI.run with messages, json response_format, and GLM thinking disabled', async () => {
-    const run = vi.fn(async () => ({
-      choices: [{ message: { content: '{"tags":[]}' } }],
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+const mocks = vi.hoisted(() => ({ create: vi.fn(), constructor: vi.fn() }))
+vi.mock('openai', () => ({ default: class {
+  constructor(options: unknown) { mocks.constructor(options) }
+  responses = { create: mocks.create }
+} }))
+import { AI_MODEL, runAiJson, runAiStream } from './ai'
+const env = { OPENAI_API_KEY: 'test-key' } as Env
+const messages = [{ role: 'user' as const, content: 'Synthetic journal entry' }]
+beforeEach(() => { vi.clearAllMocks() })
+function response(overrides = {}) {
+  return { id: 'r1', status: 'completed', output_text: '{"tags":["work"]}', output: [], ...overrides }
+}
+function stream(events: unknown[]) {
+  return { controller: { abort: vi.fn() }, async *[Symbol.asyncIterator]() { yield* events } }
+}
+async function collect() {
+  const result = []
+  for await (const delta of runAiStream(env, messages)) result.push(delta)
+  return result
+}
+describe('OpenAI transport', () => {
+  it('uses Luna and strict tagging schema without storing responses or SDK retries', async () => {
+    mocks.create.mockResolvedValue(response())
+    expect(await runAiJson(env, messages, 'tagging')).toEqual({ tags: ['work'] })
+    expect(mocks.constructor).toHaveBeenCalledWith(expect.objectContaining({ maxRetries: 0, timeout: 120_000 }))
+    expect(mocks.create).toHaveBeenCalledWith(expect.objectContaining({
+      model: AI_MODEL, input: messages, store: false, reasoning: { effort: 'none' },
+      text: { format: expect.objectContaining({ strict: true, name: 'tagging' }) },
     }))
-
-    const env = { AI: { run } } as unknown as Env
-    const result = await runWorkersAi(env, DEFAULT_AI_MODEL, [
-      { role: 'system', content: 'sys' },
-      { role: 'user', content: 'hi' },
+  })
+  it('uses a mood schema with a bounded integer score', async () => {
+    mocks.create.mockResolvedValue(response({ output_text: '{"mood_score":3,"explanation":"Mixed"}' }))
+    expect(await runAiJson(env, messages, 'mood')).toMatchObject({ mood_score: 3 })
+    expect(mocks.create.mock.calls[0][0].text.format.schema.properties.mood_score.enum).toEqual([1,2,3,4,5])
+  })
+  it('rejects missing credentials before making requests', async () => {
+    await expect(runAiJson({} as Env, messages, 'tagging')).rejects.toThrow('OPENAI_API_KEY')
+    expect(mocks.create).not.toHaveBeenCalled()
+  })
+  it('rejects incomplete JSON and refusals', async () => {
+    mocks.create.mockResolvedValue(response({ status: 'incomplete', incomplete_details: { reason: 'max_output_tokens' } }))
+    await expect(runAiJson(env, messages, 'tagging')).rejects.toThrow('max_output_tokens')
+    mocks.create.mockResolvedValue(response({ output: [{ type: 'message', content: [{ type: 'refusal' }] }] }))
+    await expect(runAiJson(env, messages, 'mood')).rejects.toThrow('declined')
+  })
+  it('streams text and reasoning summaries, requiring successful completion', async () => {
+    const s = stream([
+      { type: 'response.reasoning_summary_text.delta', delta: 'Summary' },
+      { type: 'response.output_text.delta', delta: 'Report' },
+      { type: 'response.completed', response: { id: 'r1' } },
     ])
-
-    expect(run).toHaveBeenCalledWith(DEFAULT_AI_MODEL, {
-      messages: [
-        { role: 'system', content: 'sys' },
-        { role: 'user', content: 'hi' },
-      ],
-      response_format: { type: 'json_object' },
-      chat_template_kwargs: { thinking: { type: 'disabled' } },
-    })
-    expect(extractAiOutputText(result)).toBe('{"tags":[]}')
+    mocks.create.mockResolvedValue(s)
+    expect(await collect()).toEqual([{ type: 'reasoning', text: 'Summary' }, { type: 'content', text: 'Report' }])
+    expect(s.controller.abort).toHaveBeenCalled()
+    expect(mocks.create).toHaveBeenCalledWith(expect.objectContaining({ model: AI_MODEL, stream: true, store: false }))
   })
-
-  it('disables kimi thinking with boolean false', async () => {
-    const run = vi.fn(async () => ({ choices: [{ message: { content: '{}' } }] }))
-    const env = { AI: { run } } as unknown as Env
-
-    await runWorkersAi(env, '@cf/moonshotai/kimi-k2.6', [{ role: 'user', content: 'hi' }])
-
-    expect(run).toHaveBeenCalledWith(
-      '@cf/moonshotai/kimi-k2.6',
-      expect.objectContaining({ chat_template_kwargs: { thinking: false } }),
-    )
+  it.each([
+    [],
+    [{ type: 'response.output_text.delta', delta: 'Partial report' }],
+    [{ type: 'response.incomplete', response: { status: 'incomplete', incomplete_details: { reason: 'max_output_tokens' } } }],
+    [{ type: 'response.failed', response: { status: 'failed', error: { code: 'server_error' } } }],
+    [{ type: 'response.refusal.delta', delta: 'No' }],
+    [{ type: 'error', code: 'rate_limit_exceeded' }],
+  ])('rejects unsuccessful stream %#', async (...events) => {
+    mocks.create.mockResolvedValue(stream(events))
+    await expect(collect()).rejects.toThrow()
   })
-
-  it('throws when AI binding is missing', async () => {
-    await expect(
-      runWorkersAi({} as unknown as Env, DEFAULT_AI_MODEL, [{ role: 'user', content: 'hi' }]),
-    ).rejects.toThrow('AI binding is not configured')
-  })
-})
-
-describe('extractAiOutputText', () => {
-  it('reads Responses API output_text / output arrays', () => {
-    expect(extractAiOutputText({ output_text: 'a' })).toBe('a')
-    expect(
-      extractAiOutputText({
-        output: [{ type: 'message', content: [{ type: 'output_text', text: '{"tags":[]}' }] }],
-      }),
-    ).toBe('{"tags":[]}')
-  })
-
-  it('reads Chat Completions choices', () => {
-    expect(
-      extractAiOutputText({
-        choices: [{ message: { content: '{"mood_score":3,"explanation":"ok"}' } }],
-      }),
-    ).toBe('{"mood_score":3,"explanation":"ok"}')
-  })
-})
-
-describe('parseJsonObjectFromAiText', () => {
-  it('parses raw JSON', () => {
-    expect(parseJsonObjectFromAiText('{"tags":["a"]}')).toEqual({ tags: ['a'] })
-  })
-
-  it('parses fenced JSON and prose-wrapped JSON', () => {
-    expect(parseJsonObjectFromAiText('```json\n{"tags":["x"]}\n```')).toEqual({ tags: ['x'] })
-    expect(parseJsonObjectFromAiText('Sure!\n{"tags":["y"]}\nThanks')).toEqual({ tags: ['y'] })
-  })
-
-  it('includes preview details when parsing fails', () => {
-    try {
-      parseJsonObjectFromAiText('not json at all')
-      expect.unreachable('should throw')
-    } catch (e) {
-      expect(e).toBeInstanceOf(Error)
-      expect((e as Error).message).toBe('AI returned non-JSON output')
-      expect((e as { details?: { output_text_preview?: string } }).details?.output_text_preview).toBe(
-        'not json at all',
-      )
-    }
-  })
-})
-
-describe('parseWorkersAiSseDataLine', () => {
-  it('extracts Kimi reasoning_content deltas', () => {
-    const line =
-      'data: {"choices":[{"delta":{"content":"","reasoning_content":"hello"},"finish_reason":null,"index":0}]}'
-    expect(parseWorkersAiSseDataLine(line)).toEqual([{ type: 'reasoning', text: 'hello' }])
-  })
-
-  it('extracts content deltas', () => {
-    const line = 'data: {"choices":[{"delta":{"content":"Hi","reasoning_content":null},"index":0}]}'
-    expect(parseWorkersAiSseDataLine(line)).toEqual([{ type: 'content', text: 'Hi' }])
+  it('propagates HTTP failures and timeouts without retrying', async () => {
+    mocks.create.mockRejectedValue(new Error('429 rate limit'))
+    await expect(runAiJson(env, messages, 'tagging')).rejects.toThrow('429')
+    expect(mocks.create).toHaveBeenCalledTimes(1)
   })
 })

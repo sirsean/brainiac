@@ -264,14 +264,14 @@ describe('App composer', () => {
     expect(screen.getByText('2026-08-28 → 2026-09-03')).toBeTruthy()
 
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: 'Next', exact: true }))
+      fireEvent.click(screen.getByRole('button', { name: 'Next' }))
       await Promise.resolve()
     })
     expect(screen.getByText('Page 2')).toBeTruthy()
-    expect((screen.getByRole('button', { name: 'Next', exact: true }) as HTMLButtonElement).disabled).toBe(true)
+    expect((screen.getByRole('button', { name: 'Next' }) as HTMLButtonElement).disabled).toBe(true)
     expect(apiMocks.apiFetch).toHaveBeenCalledWith(expect.objectContaining({ path: '/api/therapy-reports?limit=3&offset=3' }))
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: 'Previous', exact: true }))
+      fireEvent.click(screen.getByRole('button', { name: 'Previous' }))
       await Promise.resolve()
     })
 
@@ -289,7 +289,7 @@ describe('App composer', () => {
     await act(async () => { render(<App />) })
     expect(screen.getByText('Saved report')).toBeTruthy()
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: 'Back to reports' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Back to analysis' }))
     })
     expect(window.location.pathname).toBe('/analysis')
     expect(screen.getByRole('list', { name: 'Previous therapy reports' })).toBeTruthy()

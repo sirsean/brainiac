@@ -6,8 +6,8 @@ A tiny thought-capture app.
 - Storage: Cloudflare D1 (SQLite)
 - Async analysis: Cloudflare Queues
 - Auth: Google sign-in via Firebase Auth
-- AI tagging: Cloudflare AI (default model `@cf/zai-org/glm-4.7-flash`)
-- Therapy prep analysis: Cloudflare AI (default model `@cf/moonshotai/kimi-k2.6`, thinking streamed)
+- AI tagging and mood: OpenAI Responses API (`gpt-6-luna`)
+- Therapy prep analysis: OpenAI (`gpt-6-luna`, report and optional reasoning summary streamed)
 
 ## Features (current)
 - Sign in with Google.
@@ -41,7 +41,21 @@ VITE_FIREBASE_APP_ID=...
 ### 3) Worker env vars
 The Worker needs the Firebase project id to verify ID tokens. That is already set in `wrangler.jsonc` `vars` for this project.
 
-Optional local overrides go in `.dev.vars` (e.g. `AI_TAGGER_MODEL`). AI tagging/mood uses the Workers AI binding (`AI` with `remote: true`) — no Cloudflare API token is required. Local AI calls use your Wrangler login (`npx wrangler login` if needed).
+Add the server-side OpenAI key to the ignored `.dev.vars` file:
+
+```dotenv
+OPENAI_API_KEY=your-api-key
+```
+
+Tagging, mood, and therapy reports all use `gpt-6-luna` through the OpenAI Responses API, with the same transport locally and in production. No Workers AI binding or remote AI preview session is needed. Local analysis makes paid OpenAI API calls. Never prefix this key with `VITE_` or put it in frontend configuration.
+
+Before deploying, configure the production secret:
+
+```bash
+npx wrangler secret put OPENAI_API_KEY
+```
+
+Requests use `store: false`. Therapy reports stream final text and, when available, a reasoning summary. Previously saved reports remain readable; no database migration is required.
 
 For deployed environments, set `FIREBASE_PROJECT_ID` via `wrangler.jsonc` vars or Wrangler secrets/vars.
 

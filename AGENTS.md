@@ -13,7 +13,7 @@ This file provides guidance to coding agents (Cursor, etc.) when working with co
 - Primary local workflow: `npm run dev` (Vite + Cloudflare integration). Avoid suggesting `wrangler dev` unless explicitly requested.
 - Production build (TypeScript project build + Vite bundling): `npm run build`
 - Preview the production build locally: `npm run preview`
-- Note: Workers AI bindings access remote resources even in local dev and may incur usage charges. You may see a Wrangler warning about this; it can be suppressed by setting `remote: true` on the AI binding in `wrangler.jsonc` (already set).
+- Local AI calls use OpenAI and may incur API charges. Configure `OPENAI_API_KEY` in ignored `.dev.vars`.
 
 ### Lint
 - Run ESLint (flat config): `npm run lint`
@@ -44,7 +44,7 @@ Brainiac is a tiny thought-capture app: Google sign-in (Firebase Auth), create/e
   - Entry point: `worker/index.ts` exports an `ExportedHandler<Env>` with both `fetch` (HTTP API) and `queue` (analysis consumer).
   - Auth: `worker/auth.ts` verifies Firebase ID tokens (`jose`); `ensureUser` upserts into D1.
   - Persistence: `worker/db.ts` (D1/SQLite). Schema lives in `migrations/`.
-  - AI: `worker/tagger.ts` + `worker/mood.ts` via `worker/ai.ts` (`env.AI.run` Workers AI binding; no API token).
+  - AI: `worker/tagger.ts` + `worker/mood.ts` via `worker/ai.ts` (OpenAI Responses API, `gpt-6-luna`, server-side `OPENAI_API_KEY`).
   - Routing: paths under `/api/` are handled by the Worker; everything else returns 404 from Worker code (static SPA assets are served via Wrangler assets / Vite in local dev).
 
 ### Key API surface (`/api/…`, all auth-required)
@@ -62,9 +62,10 @@ Brainiac is a tiny thought-capture app: Google sign-in (Firebase Auth), create/e
 ### How requests are served in production
 - `wrangler.jsonc` points `main` at `worker/index.ts` and enables SPA-friendly asset behavior:
   - `assets.not_found_handling = "single-page-application"` means unknown asset paths fall back to the SPA entry (so client-side routing works when deployed).
-- Bindings: D1 (`DB`), Queues (`ANALYSIS_QUEUE`), AI (`AI`, `remote: true`), plus vars like `FIREBASE_PROJECT_ID` / `AI_TAGGER_MODEL` / `AI_THERAPY_MODEL`.
-- Note: Workers AI uses the `AI` binding (Wrangler login for local remote calls). Do not require `CLOUDFLARE_API_TOKEN` for tagging/mood.
-- Therapy analysis (`/api/therapy-reports/*`) streams `@cf/moonshotai/kimi-k2.6` with thinking **enabled**; tagging/mood keep thinking disabled on GLM.
+- Bindings: D1 (`DB`), Queues (`ANALYSIS_QUEUE`), and `FIREBASE_PROJECT_ID`.
+- AI uses a server-side `OPENAI_API_KEY` secret: `.dev.vars` locally, `wrangler secret put OPENAI_API_KEY` in production. Never expose it in Vite client variables.
+- All analysis uses `gpt-6-luna` via the Responses API with `store: false`. Tagging/mood use strict JSON schemas and reasoning effort `none`; therapy streams Markdown with effort `medium` and optional reasoning summaries.
+- SDK retries are disabled; the analysis queue owns tagging/mood retries. Interrupted therapy streams retain partial output and an error status.
 
 ### Tooling and configuration that tie it together
 - Vite config (`vite.config.ts`) uses:

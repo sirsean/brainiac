@@ -34,12 +34,9 @@ import {
   type AnalysisJobStatusSummaryRow,
 } from './db'
 import {
-  DEFAULT_AI_MODEL,
-  DEFAULT_THERAPY_AI_MODEL,
-  extractAiOutputText,
-  parseJsonObjectFromAiText,
-  runWorkersAi,
-  runWorkersAiStream,
+  AI_MODEL,
+  runAiJson,
+  runAiStream,
 } from './ai'
 import {
   buildTaggerSystemPrompt,
@@ -653,7 +650,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
     }
   }
 
-  // Therapy prep: stream Kimi thinking + report over SSE, persist when done.
+  // Therapy prep: stream OpenAI reasoning summary + report over SSE, persist when done.
   if (request.method === 'POST' && url.pathname === '/api/therapy-reports/stream') {
     let body: unknown
     try {
@@ -697,8 +694,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
     meta.truncated = pack.truncated
     meta.thought_ids = pack.includedThoughtIds
 
-    const model =
-      env.AI_THERAPY_MODEL || env.AI_TAGGER_MODEL || DEFAULT_THERAPY_AI_MODEL
+    const model = AI_MODEL
 
     const report = await createTherapyReport(env, {
       uid: auth.uid,
@@ -745,7 +741,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
         })
         await writeEvent('status', { phase: 'model_running' })
 
-        for await (const delta of runWorkersAiStream(env, model, [
+        for await (const delta of runAiStream(env, [
           { role: 'system', content: pack.system },
           { role: 'user', content: pack.user },
         ])) {
@@ -783,16 +779,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
           contentChars: reportMarkdown.length,
         })
 
-        if (!reportMarkdown.trim() && thinkingText.trim()) {
-          // Some models park the answer in reasoning; keep what we have.
-          reportMarkdown = thinkingText
-        }
-
-        if (!reportMarkdown.trim() && !thinkingText.trim()) {
-          throw new Error(
-            `Model stream completed with no usable text (deltas=${deltaCount}). Check [ai.stream] logs for chunk parsing.`,
-          )
-        }
+        if (!reportMarkdown.trim()) throw new Error('Model completed without a report')
 
         await markTherapyReportDone(env, {
           uid: auth.uid,
@@ -872,21 +859,19 @@ async function processTaggingJob(env: Env, job: AnalysisJobRow): Promise<void> {
   const system = buildTaggerSystemPrompt()
   const user = buildTaggerUserPrompt({ thought: thought.body, existingTags, currentTags })
 
-  const model = env.AI_TAGGER_MODEL || DEFAULT_AI_MODEL
+  const model = AI_MODEL
 
-  const aiOut = await runWorkersAi(env, model, [
+  const parsed = await runAiJson(env, [
     { role: 'system', content: system },
     { role: 'user', content: user },
-  ])
-  const outputText = extractAiOutputText(aiOut)
-  const parsed = parseJsonObjectFromAiText(outputText) as TaggingAiResult
+  ], 'tagging') as TaggingAiResult
 
   const { valid, invalid } = normalizeAndValidateTags(parsed.tags)
 
   await setThoughtTagsAiOnly(env, { uid: job.uid, thoughtId: thought.id, tagNames: valid })
 
   const resultJson = JSON.stringify({
-    model: env.AI_TAGGER_MODEL,
+    model,
     tags: valid,
     invalid_tags_dropped: invalid,
     raw: parsed,
@@ -911,14 +896,12 @@ async function processMoodJob(env: Env, job: AnalysisJobRow): Promise<void> {
   const system = buildMoodSystemPrompt()
   const user = buildMoodUserPrompt({ thought: thought.body })
 
-  const model = env.AI_MOOD_MODEL || env.AI_TAGGER_MODEL || DEFAULT_AI_MODEL
+  const model = AI_MODEL
 
-  const aiOut = await runWorkersAi(env, model, [
+  const parsed = await runAiJson(env, [
     { role: 'system', content: system },
     { role: 'user', content: user },
-  ])
-  const outputText = extractAiOutputText(aiOut)
-  const parsed = parseJsonObjectFromAiText(outputText) as MoodAiResult
+  ], 'mood') as MoodAiResult
 
   const score = Number(parsed.mood_score)
   if (!Number.isFinite(score) || !Number.isInteger(score) || score < 1 || score > 5) {

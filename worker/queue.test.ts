@@ -39,19 +39,18 @@ const authMocks = vi.hoisted(() => {
 vi.mock('./db', () => dbMocks)
 vi.mock('./auth', () => authMocks)
 
+const aiMocks = vi.hoisted(() => ({ runAiJson: vi.fn(), AI_MODEL: 'gpt-6-luna' }))
+vi.mock('./ai', () => aiMocks)
+
 import handler from './index'
 
 function makeEnv(aiOutputText: string): Env {
+  aiMocks.runAiJson.mockImplementation(async () => JSON.parse(aiOutputText))
   return {
     FIREBASE_PROJECT_ID: 'proj',
-    AI_TAGGER_MODEL: '@cf/zai-org/glm-4.7-flash',
+    OPENAI_API_KEY: 'test-key',
     DB: {} as unknown as D1Database,
     ANALYSIS_QUEUE: { send: async () => undefined } as unknown as Queue,
-    AI: {
-      run: vi.fn(async () => ({
-        choices: [{ message: { content: aiOutputText } }],
-      })),
-    } as unknown as Ai,
   } as unknown as Env
 }
 
@@ -230,7 +229,7 @@ describe('Worker queue consumer', () => {
       thoughtId: 3,
       moodScore: 4,
       explanation: 'Feels generally positive.',
-      model: '@cf/zai-org/glm-4.7-flash',
+      model: 'gpt-6-luna',
     })
 
     expect(dbMocks.markJobDone).toHaveBeenCalledWith(

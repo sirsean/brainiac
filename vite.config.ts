@@ -6,5 +6,5 @@ import { cloudflare } from "@cloudflare/vite-plugin";
 
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [react(), tailwindcss(), cloudflare({ remoteBindings: process.env.BRAINIAC_LOCAL_ONLY !== '1' })],
+  plugins: [react(), tailwindcss(), cloudflare()],
 })
