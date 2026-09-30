@@ -23,13 +23,85 @@ type PreviewMeta = {
 
 type Phase = 'range' | 'running' | 'done' | 'error'
 
+type ReportStatus = 'running' | 'done' | 'error'
+
+type HistoryItem = {
+  id: number
+  start_date: string
+  end_date: string
+  thought_count: number
+  model: string | null
+  status: ReportStatus
+  created_at: number
+  updated_at: number
+  error: string | null
+}
+
+type TherapyReportDetail = {
+  id: number
+  start_date: string
+  end_date: string
+  thought_count: number
+  status: ReportStatus
+  thinking_text: string | null
+  report_markdown: string | null
+  meta_json: string | null
+  error: string | null
+  created_at: number
+  updated_at: number
+}
+
 type TherapyAnalysisPageProps = {
   getIdToken: () => Promise<string | null>
+  selectedReportId: number | null
+  onOpenReport: (id: number) => void
+  onReports: () => void
   onBack: () => void
 }
 
+function formatReportTs(ts: number): string {
+  return new Date(ts * 1000).toLocaleString()
+}
+
+function parseReportMeta(metaJson: string | null, thoughtCount: number): PreviewMeta | null {
+  if (!metaJson) {
+    return {
+      thought_count: thoughtCount,
+      truncated: false,
+      tag_counts: [],
+      mood_by_day: [],
+      mood_avg: null,
+    }
+  }
+  try {
+    const raw = JSON.parse(metaJson) as Partial<PreviewMeta>
+    return {
+      thought_count: typeof raw.thought_count === 'number' ? raw.thought_count : thoughtCount,
+      included_count: typeof raw.included_count === 'number' ? raw.included_count : undefined,
+      truncated: Boolean(raw.truncated),
+      tag_counts: Array.isArray(raw.tag_counts) ? raw.tag_counts : [],
+      mood_by_day: Array.isArray(raw.mood_by_day) ? raw.mood_by_day : [],
+      mood_avg: typeof raw.mood_avg === 'number' ? raw.mood_avg : null,
+    }
+  } catch {
+    return {
+      thought_count: thoughtCount,
+      truncated: false,
+      tag_counts: [],
+      mood_by_day: [],
+      mood_avg: null,
+    }
+  }
+}
+
+function statusLabel(status: ReportStatus): string {
+  if (status === 'done') return 'Done'
+  if (status === 'error') return 'Error'
+  return 'Running'
+}
+
 export function TherapyAnalysisPage(props: TherapyAnalysisPageProps) {
-  const { getIdToken, onBack } = props
+  const { getIdToken, onBack, selectedReportId, onOpenReport, onReports } = props
 
   const defaults = useMemo(() => previousThursdayThroughToday(), [])
   const [rangeStart, setRangeStart] = useState<string | null>(defaults.from)
@@ -37,7 +109,7 @@ export function TherapyAnalysisPage(props: TherapyAnalysisPageProps) {
   const [month, setMonth] = useState(() => monthKeyFromDateKey(defaults.to))
   const [dayCounts, setDayCounts] = useState<Record<string, number>>({})
   const [dayAvgMood, setDayAvgMood] = useState<Record<string, number | null>>({})
-  const [phase, setPhase] = useState<Phase>('range')
+  const [phase, setPhase] = useState<Phase>(selectedReportId == null ? 'range' : 'done')
   const [preview, setPreview] = useState<PreviewMeta | null>(null)
   const [previewBusy, setPreviewBusy] = useState(false)
   const [thinking, setThinking] = useState('')
@@ -46,6 +118,54 @@ export function TherapyAnalysisPage(props: TherapyAnalysisPageProps) {
   const [error, setError] = useState<string | null>(null)
   const [streamMeta, setStreamMeta] = useState<PreviewMeta | null>(null)
   const [statusNote, setStatusNote] = useState<string | null>(null)
+  const [history, setHistory] = useState<HistoryItem[]>([])
+  const [historyBusy, setHistoryBusy] = useState(false)
+  const [historyError, setHistoryError] = useState<string | null>(null)
+  const [historyPage, setHistoryPage] = useState(0)
+  const [hasMore, setHasMore] = useState(false)
+  const [openingId, setOpeningId] = useState<number | null>(null)
+
+  async function loadHistory() {
+    setHistoryError(null)
+    setHistoryBusy(true)
+    try {
+      const data = await apiFetch<{ reports: HistoryItem[]; has_more: boolean }>({
+        path: `/api/therapy-reports?limit=3&offset=${historyPage * 3}`,
+        getIdToken,
+      })
+      setHistory(data.reports)
+      setHasMore(data.has_more)
+    } catch (e) {
+      setHistoryError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setHistoryBusy(false)
+    }
+  }
+
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      setHistoryBusy(true)
+      setHistoryError(null)
+      try {
+        const data = await apiFetch<{ reports: HistoryItem[]; has_more: boolean }>({
+          path: `/api/therapy-reports?limit=3&offset=${historyPage * 3}`,
+          getIdToken,
+        })
+        if (!cancelled) {
+          setHistory(data.reports)
+          setHasMore(data.has_more)
+        }
+      } catch (e) {
+        if (!cancelled) setHistoryError(e instanceof Error ? e.message : String(e))
+      } finally {
+        if (!cancelled) setHistoryBusy(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [getIdToken, historyPage])
 
   useEffect(() => {
     let cancelled = false
@@ -123,6 +243,49 @@ export function TherapyAnalysisPage(props: TherapyAnalysisPageProps) {
     setRangeEnd(next.end)
     setError(null)
   }
+
+  useEffect(() => {
+    if (selectedReportId == null) return
+    const id = selectedReportId
+    let cancelled = false
+    async function readReport() {
+      setOpeningId(id)
+      setError(null)
+      try {
+        const data = await apiFetch<{ report: TherapyReportDetail }>({
+          path: `/api/therapy-reports/${id}`,
+          getIdToken,
+        })
+        if (cancelled) return
+        const report = data.report
+        setRangeStart(report.start_date)
+        setRangeEnd(report.end_date)
+        setMonth(monthKeyFromDateKey(report.end_date))
+        setReportId(report.id)
+        setThinking(report.thinking_text ?? '')
+        setContent(report.report_markdown ?? '')
+        setStreamMeta(parseReportMeta(report.meta_json, report.thought_count))
+        setStatusNote(
+          report.status === 'running' ? 'This report was still generating when last saved.' : null,
+        )
+        if (report.status === 'error') {
+          setError(report.error ?? 'Report failed')
+          setPhase('error')
+        } else {
+          setPhase('done')
+        }
+      } catch (e) {
+        if (!cancelled) {
+          setError(e instanceof Error ? e.message : String(e))
+          setPhase('error')
+        }
+      } finally {
+        if (!cancelled) setOpeningId(null)
+      }
+    }
+    void readReport()
+    return () => { cancelled = true }
+  }, [selectedReportId, getIdToken])
 
   async function onGenerate() {
     if (!rangeStart || !rangeEnd) return
@@ -229,6 +392,7 @@ export function TherapyAnalysisPage(props: TherapyAnalysisPageProps) {
           console.info('[therapy.ui] done', data)
           setStatusNote('Complete')
           setPhase('done')
+          void loadHistory()
           return
         }
 
@@ -273,10 +437,12 @@ export function TherapyAnalysisPage(props: TherapyAnalysisPageProps) {
         if (contentAcc.trim() || thinkingAcc.trim()) {
           setPhase('done')
           setStatusNote('Complete')
+          void loadHistory()
         } else {
           setError((prev) => prev ?? 'Stream ended without a report')
           setPhase('error')
           setStatusNote(null)
+          void loadHistory()
         }
       }
     } catch (e) {
@@ -284,6 +450,7 @@ export function TherapyAnalysisPage(props: TherapyAnalysisPageProps) {
       setError(e instanceof Error ? e.message : String(e))
       setPhase('error')
       setStatusNote(null)
+      void loadHistory()
     }
   }
 
@@ -310,6 +477,66 @@ export function TherapyAnalysisPage(props: TherapyAnalysisPageProps) {
       </div>
 
       {phase === 'range' ? (
+        <>
+            <div className="space-y-2 rounded-lg border border-amber-400/25 bg-black/50 p-3">
+              <div className="text-[0.65rem] uppercase tracking-[0.2em] text-amber-300/80">
+                Previous reports
+              </div>
+              {historyBusy && history.length === 0 ? (
+                <div className="text-xs text-amber-200/60">Loading…</div>
+              ) : null}
+              {historyError ? (
+                <div role="alert" className="text-xs text-red-300">
+                  Could not load reports: {historyError}
+                  <button type="button" disabled={historyBusy} onClick={() => void loadHistory()} className="ml-2 underline">Retry</button>
+                </div>
+              ) : null}
+              {!historyBusy && !historyError && history.length === 0 ? (
+                <div className="text-xs text-amber-200/50">No reports yet. Generate one to see it here.</div>
+              ) : null}
+              {history.length > 0 ? (
+                <ul className="space-y-1.5" aria-label="Previous therapy reports">
+                  {history.map((item) => {
+                    const busy = openingId === item.id
+                    return (
+                      <li key={item.id}>
+                        <button
+                          type="button"
+                          disabled={busy || openingId != null}
+                          onClick={() => onOpenReport(item.id)}
+                          className="flex w-full flex-col gap-0.5 rounded border border-amber-400/30 bg-black/40 px-2.5 py-2 text-left text-xs text-amber-100 hover:border-amber-300/60 hover:bg-amber-500/10 disabled:cursor-wait disabled:opacity-60"
+                        >
+                          <span className="flex flex-wrap items-center justify-between gap-2">
+                            <span className="font-medium text-amber-100">
+                              {item.start_date} → {item.end_date}
+                            </span>
+                            <span
+                              className={
+                                item.status === 'done'
+                                  ? 'text-emerald-300/90'
+                                  : item.status === 'error'
+                                    ? 'text-red-300/90'
+                                    : 'text-amber-300/80'
+                              }
+                            >
+                              {busy ? 'Opening…' : statusLabel(item.status)}
+                            </span>
+                          </span>
+                          <span className="text-amber-200/60">
+                            {item.thought_count} thoughts · {formatReportTs(item.created_at)}
+                          </span>
+                        </button>
+                      </li>
+                    )
+                  })}
+                </ul>
+              ) : null}
+              <nav aria-label="Report history pages" className="flex items-center justify-between gap-3 text-xs text-amber-200">
+                <button type="button" disabled={historyBusy || historyPage === 0} onClick={() => setHistoryPage((page) => page - 1)} className="rounded border border-amber-400/40 px-3 py-1 disabled:opacity-40">Previous</button>
+                <span>Page {historyPage + 1}</span>
+                <button type="button" disabled={historyBusy || !hasMore} onClick={() => setHistoryPage((page) => page + 1)} className="rounded border border-amber-400/40 px-3 py-1 disabled:opacity-40">Next</button>
+              </nav>
+            </div>
         <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_240px]">
           <div className="space-y-3">
             <p className="text-xs text-amber-200/80">
@@ -332,6 +559,8 @@ export function TherapyAnalysisPage(props: TherapyAnalysisPageProps) {
                 To: {rangeEnd ?? 'pick end'}
               </span>
             </div>
+
+
           </div>
 
           <div className="space-y-3 rounded-lg border border-amber-400/25 bg-black/50 p-3 text-xs">
@@ -378,7 +607,10 @@ export function TherapyAnalysisPage(props: TherapyAnalysisPageProps) {
             </button>
           </div>
         </div>
+        </>
       ) : null}
+
+      {openingId != null ? <div role="status">Loading report…</div> : null}
 
       {phase === 'running' || phase === 'done' || phase === 'error' ? (
         <div className="space-y-4">
@@ -392,6 +624,7 @@ export function TherapyAnalysisPage(props: TherapyAnalysisPageProps) {
               </span>
             ) : null}
             {reportId != null ? <span className="text-amber-300/70">report #{reportId}</span> : null}
+            {phase === 'done' && statusNote ? <span className="text-amber-300">{statusNote}</span> : null}
             {phase === 'running' ? (
               <span className="animate-pulse text-amber-300">{statusNote ?? 'Analyzing…'}</span>
             ) : null}
@@ -461,16 +694,10 @@ export function TherapyAnalysisPage(props: TherapyAnalysisPageProps) {
             <div className="flex flex-wrap gap-2">
               <button
                 type="button"
-                onClick={() => {
-                  setPhase('range')
-                  setThinking('')
-                  setContent('')
-                  setStreamMeta(null)
-                  setError(null)
-                }}
+                onClick={onReports}
                 className="rounded border border-amber-400/50 bg-black/50 px-3 py-1.5 text-[0.7rem] uppercase tracking-[0.18em] text-amber-200 hover:bg-amber-500/10"
               >
-                New range
+                Back to reports
               </button>
               <button
                 type="button"

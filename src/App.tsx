@@ -114,7 +114,9 @@ function App() {
   const [composeExpanded, setComposeExpanded] = useState(false)
   const composeRef = useRef<HTMLTextAreaElement | null>(null)
   const [path, setPath] = useState(() => normalizeAppPath(window.location.pathname))
-  const onAnalysis = path === '/analysis'
+  const analysisMatch = path.match(/^\/analysis(?:\/(\d+))?$/)
+  const onAnalysis = analysisMatch != null
+  const selectedReportId = analysisMatch?.[1] ? Number(analysisMatch[1]) : null
 
   const tagQuery = useMemo(() => selectedTags.join(','), [selectedTags])
 
@@ -655,7 +657,7 @@ function App() {
       )}
 
       {!loading && user && onAnalysis ? (
-        <TherapyAnalysisPage getIdToken={getIdToken} onBack={() => navigate('/')} />
+        <TherapyAnalysisPage key={path} getIdToken={getIdToken} selectedReportId={selectedReportId} onOpenReport={(id) => navigate(`/analysis/${id}`)} onReports={() => navigate('/analysis')} onBack={() => navigate('/')} />
       ) : (
       <div className="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-3 px-4 py-4">
         {error ? <div className="error">Error: {error}</div> : null}

@@ -618,12 +618,16 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
     })
   }
 
-  // Therapy prep: list recent reports (for later history UI).
+  // List saved reports, newest first.
   if (request.method === 'GET' && url.pathname === '/api/therapy-reports') {
     const limitRaw = Number(url.searchParams.get('limit') ?? '20')
     const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(50, Math.floor(limitRaw))) : 20
-    const reports = await listTherapyReports(env, auth.uid, limit)
+    const offsetRaw = Number(url.searchParams.get('offset') ?? '0')
+    const offset = Number.isSafeInteger(offsetRaw) ? Math.max(0, offsetRaw) : 0
+    const rows = await listTherapyReports(env, auth.uid, limit + 1, offset)
+    const reports = rows.slice(0, limit)
     return json({
+      has_more: rows.length > limit,
       reports: reports.map((r) => ({
         id: r.id,
         start_date: r.start_date,

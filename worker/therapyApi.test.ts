@@ -75,6 +75,21 @@ beforeEach(() => {
 })
 
 describe('therapy reports API', () => {
+  it('paginates history and indicates when another page exists', async () => {
+    dbMocks.listTherapyReports.mockResolvedValue([
+      { id: 4 }, { id: 3 }, { id: 2 }, { id: 1 },
+    ])
+    const res = await handler.fetch!(
+      new Request('https://example.com/api/therapy-reports?limit=3&offset=3'),
+      makeEnv(),
+    )
+    expect(dbMocks.listTherapyReports).toHaveBeenCalledWith(expect.anything(), 'u1', 4, 3)
+    expect(await res.json()).toMatchObject({
+      has_more: true,
+      reports: [{ id: 4 }, { id: 3 }, { id: 2 }],
+    })
+  })
+
   it('preview returns empty stats for empty ranges', async () => {
     dbMocks.listThoughtsInCreatedAtRange.mockResolvedValue([])
     dbMocks.getTagsForThoughtIds.mockResolvedValue(new Map())

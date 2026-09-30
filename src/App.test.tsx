@@ -172,6 +172,9 @@ describe('App composer', () => {
           mood_avg: null,
         }
       }
+      if (path.startsWith('/api/therapy-reports?') || path === '/api/therapy-reports') {
+        return { reports: [] }
+      }
       throw new Error(`Unexpected apiFetch path: ${path}`)
     })
 
@@ -186,7 +189,110 @@ describe('App composer', () => {
     expect(window.location.pathname).toBe('/analysis')
     expect(screen.getByRole('main', { name: 'Therapy analysis' })).toBeTruthy()
     expect(screen.getByText('Generate report')).toBeTruthy()
+    expect(screen.getByText('Previous reports')).toBeTruthy()
+    expect(screen.getByText(/No reports yet/)).toBeTruthy()
     expect(screen.queryByRole('dialog', { name: 'Therapy analysis' })).toBeNull()
+  })
+
+  it('lists previous therapy reports and opens one from history', async () => {
+    apiMocks.apiFetch.mockImplementation(async ({ path }: { path: string }) => {
+      if (path === '/api/tags?limit=200') return { tags: [] }
+      if (path.startsWith('/api/thoughts/day-counts?')) return { counts: {} }
+      if (path.startsWith('/api/thoughts?')) return { thoughts: [], next_cursor: null }
+      if (path.startsWith('/api/therapy-reports/preview?')) {
+        return {
+          thought_count: 0,
+          truncated: false,
+          tag_counts: [],
+          mood_by_day: [],
+          mood_avg: null,
+        }
+      }
+      if (path.startsWith('/api/therapy-reports?') || path === '/api/therapy-reports') {
+        return {
+          has_more: !path.includes('offset=3'),
+          reports: [
+            {
+              id: path.includes('offset=3') ? 41 : 42,
+              start_date: '2026-08-28',
+              end_date: '2026-09-03',
+              thought_count: 5,
+              model: 'test-model',
+              status: 'done',
+              created_at: 1_725_000_000,
+              updated_at: 1_725_000_100,
+              error: null,
+            },
+          ],
+        }
+      }
+      if (path === '/api/therapy-reports/42') {
+        return {
+          report: {
+            id: 42,
+            start_date: '2026-08-28',
+            end_date: '2026-09-03',
+            thought_count: 5,
+            status: 'done',
+            thinking_text: 'pondering',
+            report_markdown: '## Saved report',
+            meta_json: JSON.stringify({
+              thought_count: 5,
+              truncated: false,
+              tag_counts: [{ name: 'work', count: 2 }],
+              mood_by_day: [],
+              mood_avg: 3.5,
+            }),
+            error: null,
+            created_at: 1_725_000_000,
+            updated_at: 1_725_000_100,
+          },
+        }
+      }
+      throw new Error(`Unexpected apiFetch path: ${path}`)
+    })
+
+    window.history.pushState({}, '', '/')
+    const view = render(<App />)
+
+    await act(async () => {
+      fireEvent.click(screen.getAllByLabelText('Open therapy analysis')[0]!)
+      await Promise.resolve()
+    })
+
+    expect(screen.getByRole('list', { name: 'Previous therapy reports' })).toBeTruthy()
+    expect(screen.getByText('2026-08-28 → 2026-09-03')).toBeTruthy()
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Next', exact: true }))
+      await Promise.resolve()
+    })
+    expect(screen.getByText('Page 2')).toBeTruthy()
+    expect((screen.getByRole('button', { name: 'Next', exact: true }) as HTMLButtonElement).disabled).toBe(true)
+    expect(apiMocks.apiFetch).toHaveBeenCalledWith(expect.objectContaining({ path: '/api/therapy-reports?limit=3&offset=3' }))
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Previous', exact: true }))
+      await Promise.resolve()
+    })
+
+    await act(async () => {
+      fireEvent.click(screen.getByText('2026-08-28 → 2026-09-03'))
+      await Promise.resolve()
+    })
+
+    expect(window.location.pathname).toBe('/analysis/42')
+    expect(screen.getByText('Saved report')).toBeTruthy()
+    expect(screen.getByText('pondering')).toBeTruthy()
+    expect(screen.getByText('report #42')).toBeTruthy()
+
+    view.unmount()
+    await act(async () => { render(<App />) })
+    expect(screen.getByText('Saved report')).toBeTruthy()
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Back to reports' }))
+    })
+    expect(window.location.pathname).toBe('/analysis')
+    expect(screen.getByRole('list', { name: 'Previous therapy reports' })).toBeTruthy()
   })
 })
 

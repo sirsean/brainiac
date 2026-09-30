@@ -764,6 +764,7 @@ export async function listTherapyReports(
   env: Env,
   uid: string,
   limit: number,
+  offset = 0,
 ): Promise<TherapyReportRow[]> {
   const { results } = await env.DB.prepare(
     `SELECT id, uid, start_date, end_date, tz_offset_min, thought_count, model, status,
@@ -771,9 +772,9 @@ export async function listTherapyReports(
      FROM therapy_reports
      WHERE uid = ?
      ORDER BY created_at DESC, id DESC
-     LIMIT ?`
+     LIMIT ? OFFSET ?`
   )
-    .bind(uid, limit)
+    .bind(uid, limit, offset)
     .all<TherapyReportRow>()
 
   return results
