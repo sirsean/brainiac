@@ -54,6 +54,8 @@ import {
 // NOTE: The API exposes timestamps as Unix epoch seconds in UTC (matching the DB schema).
 // The frontend is responsible for converting these numeric seconds to local time for display.
 
+const SECONDS_PER_DAY = 86_400
+
 type ApiErrorBody = {
   error: string
 }
@@ -160,7 +162,7 @@ export function utcRangeForLocalDay(opts: { y: number; m: number; d: number; tzO
   // Local midnight converted to UTC: UTC = local + offset.
   const startMs = Date.UTC(y, m - 1, d, 0, 0, 0) + tzOffsetMinutes * 60 * 1000
   const start = Math.floor(startMs / 1000)
-  return { start, endExclusive: start + 24 * 60 * 60 }
+  return { start, endExclusive: start + SECONDS_PER_DAY }
 }
 
 export function utcRangeForLocalMonth(opts: { y: number; m: number; tzOffsetMinutes: number }): {
@@ -171,6 +173,29 @@ export function utcRangeForLocalMonth(opts: { y: number; m: number; tzOffsetMinu
   const startMs = Date.UTC(y, m - 1, 1, 0, 0, 0) + tzOffsetMinutes * 60 * 1000
   const endMs = Date.UTC(y, m, 1, 0, 0, 0) + tzOffsetMinutes * 60 * 1000
   return { start: Math.floor(startMs / 1000), endExclusive: Math.floor(endMs / 1000) }
+}
+
+function parseLocalDayStarts(
+  params: URLSearchParams,
+  firstDayUtc: number,
+  dayCount: number,
+): number[] | undefined {
+  const raw = params.get('day_starts')
+  if (raw == null) {
+    const offsetSeconds = parseTzOffsetMinutesParam(params.get('tz_offset_min')) * 60
+    return Array.from({ length: dayCount + 1 }, (_, i) => firstDayUtc + i * SECONDS_PER_DAY + offsetSeconds)
+  }
+
+  const parts = raw.split(',')
+  if (parts.length !== dayCount + 1 || parts.some((part) => !/^-?\d+$/.test(part))) return undefined
+
+  const starts = parts.map(Number)
+  // Allow skipped calendar dates, whose start and end can be the same instant.
+  const valid = starts.every((start, i) =>
+    Math.abs(start - (firstDayUtc + i * SECONDS_PER_DAY)) <= SECONDS_PER_DAY &&
+    (i === 0 || start >= starts[i - 1]),
+  )
+  return valid ? starts : undefined
 }
 
 export function utcRangeForLocalDateSpan(opts: {
@@ -516,15 +541,15 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
     const date = parseIsoDateParam(url.searchParams.get('date'))
     if (!date) return err(400, 'date is required (YYYY-MM-DD)')
 
-    const tzOffsetMinutes = parseTzOffsetMinutesParam(url.searchParams.get('tz_offset_min'))
+    const firstDayUtc = Date.UTC(date.y, date.m - 1, date.d) / 1000
+    const starts = parseLocalDayStarts(url.searchParams, firstDayUtc, 1)
+    if (!starts) return err(400, 'Invalid day_starts')
     const tags = parseTagsParam(url.searchParams.get('tags'))
-
-    const range = utcRangeForLocalDay({ y: date.y, m: date.m, d: date.d, tzOffsetMinutes })
 
     const thoughts = await listThoughtsInCreatedAtRange(env, {
       uid: auth.uid,
-      startCreatedAt: range.start,
-      endCreatedAtExclusive: range.endExclusive,
+      startCreatedAt: starts[0],
+      endCreatedAtExclusive: starts[1],
       limit,
       cursor,
       tags: tags.length > 0 ? tags : undefined,
@@ -560,17 +585,21 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
     const month = parseIsoMonthParam(url.searchParams.get('month'))
     if (!month) return err(400, 'month is required (YYYY-MM)')
 
-    const tzOffsetMinutes = parseTzOffsetMinutesParam(url.searchParams.get('tz_offset_min'))
-    const tzOffsetSeconds = tzOffsetMinutes * 60
+    const utcMonth = utcRangeForLocalMonth({ ...month, tzOffsetMinutes: 0 })
+    const dayCount = (utcMonth.endExclusive - utcMonth.start) / SECONDS_PER_DAY
+    const starts = parseLocalDayStarts(url.searchParams, utcMonth.start, dayCount)
+    if (!starts) return err(400, 'Invalid day_starts')
     const tags = parseTagsParam(url.searchParams.get('tags'))
 
-    const range = utcRangeForLocalMonth({ y: month.y, m: month.m, tzOffsetMinutes })
+    const days = Array.from({ length: dayCount }, (_, i) => ({
+      day: `${month.iso}-${String(i + 1).padStart(2, '0')}`,
+      start: starts[i],
+      endExclusive: starts[i + 1],
+    }))
 
     const rows = await listThoughtCountsByLocalDay(env, {
       uid: auth.uid,
-      startCreatedAt: range.start,
-      endCreatedAtExclusive: range.endExclusive,
-      tzOffsetSeconds,
+      days,
       tags: tags.length > 0 ? tags : undefined,
     })
 

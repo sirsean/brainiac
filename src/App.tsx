@@ -4,6 +4,7 @@ import './App.css'
 import { apiFetch } from './api'
 import { analysisLabel, type ThoughtAnalysisSummary } from './analysisLabel'
 import { Calendar } from './Calendar'
+import { currentMonthKey, localDayStarts, localMonthDayStarts } from './calendarDates'
 import { TherapyAnalysisPage } from './TherapyAnalysisPage'
 import { useAuth } from './useAuth'
 
@@ -47,52 +48,6 @@ type TagStats = {
 function formatTs(ts: number | null | undefined): string {
   if (!ts) return ''
   return new Date(ts * 1000).toLocaleString()
-}
-
-function pad2(n: number): string {
-  return String(n).padStart(2, '0')
-}
-
-function currentMonthKey(): string {
-  const d = new Date()
-  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}`
-}
-
-function parseLocalDateKey(date: string | null): { y: number; m: number; d: number } | null {
-  if (!date) return null
-  const m = date.match(/^(\d{4})-(\d{2})-(\d{2})$/)
-  if (!m) return null
-  const y = Number(m[1])
-  const mm = Number(m[2])
-  const d = Number(m[3])
-  if (!Number.isFinite(y) || !Number.isFinite(mm) || !Number.isFinite(d)) return null
-  return { y, m: mm, d }
-}
-
-function parseLocalMonthKey(month: string | null): { y: number; m: number } | null {
-  if (!month) return null
-  const m = month.match(/^(\d{4})-(\d{2})$/)
-  if (!m) return null
-  const y = Number(m[1])
-  const mm = Number(m[2])
-  if (!Number.isFinite(y) || !Number.isFinite(mm)) return null
-  return { y, m: mm }
-}
-
-// Derive timezone offset (in minutes) for a specific local calendar date key (YYYY-MM-DD).
-export function tzOffsetMinutesForLocalDateKey(date: string | null): number {
-  const parsed = parseLocalDateKey(date)
-  if (!parsed) return new Date().getTimezoneOffset()
-  const d = new Date(parsed.y, parsed.m - 1, parsed.d, 0, 0, 0)
-  return d.getTimezoneOffset()
-}
-
-// Derive timezone offset (in minutes) for a specific local calendar month key (YYYY-MM).
-export function tzOffsetMinutesForLocalMonthKey(month: string | null): number {
-  const parsed = parseLocalMonthKey(month)
-  if (!parsed) return new Date().getTimezoneOffset()
-  const d = new Date(parsed.y, parsed.m - 1, 1, 0, 0, 0)
-  return d.getTimezoneOffset()
 }
 
 function App() {
@@ -157,9 +112,8 @@ function App() {
 
     // If a date is selected, show that day's thoughts (optionally filtered by tags).
     if (selectedDate) {
-      const tzOffsetMin = String(tzOffsetMinutesForLocalDateKey(selectedDate))
       params.set('date', selectedDate)
-      params.set('tz_offset_min', tzOffsetMin)
+      params.set('day_starts', localDayStarts(selectedDate).join(','))
       params.set('limit', '200')
 
       if (selectedTags.length > 0) {
@@ -219,11 +173,9 @@ function App() {
   }
 
   async function refreshDayCounts() {
-    const tzOffsetMin = String(tzOffsetMinutesForLocalMonthKey(calendarMonth))
-
     const params = new URLSearchParams()
     params.set('month', calendarMonth)
-    params.set('tz_offset_min', tzOffsetMin)
+    params.set('day_starts', localMonthDayStarts(calendarMonth).join(','))
 
     if (selectedTags.length > 0) {
       params.set('tags', tagQuery)
@@ -483,7 +435,7 @@ function App() {
     const mm = m ? Number(m[2]) - 1 : new Date().getMonth()
 
     const next = new Date(y, mm + deltaMonths, 1)
-    setCalendarMonth(`${next.getFullYear()}-${pad2(next.getMonth() + 1)}`)
+    setCalendarMonth(currentMonthKey(next))
   }
 
   function selectDate(date: string) {

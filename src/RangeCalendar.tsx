@@ -144,18 +144,3 @@ export function RangeCalendar(props: RangeCalendarProps) {
     </div>
   )
 }
-
-/** Apply click-to-set-start / click-to-set-end range semantics. */
-export function nextRangeSelection(
-  prevStart: string | null,
-  prevEnd: string | null,
-  clicked: string,
-): { start: string; end: string | null } {
-  if (!prevStart || (prevStart && prevEnd)) {
-    return { start: clicked, end: null }
-  }
-  if (clicked < prevStart) {
-    return { start: clicked, end: prevStart }
-  }
-  return { start: prevStart, end: clicked }
-}

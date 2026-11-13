@@ -1,15 +1,15 @@
 import { useEffect, useMemo, useState } from 'react'
 
 import { apiFetch } from './api'
-import { RangeCalendar, nextRangeSelection } from './RangeCalendar'
+import { currentMonthKey, localMonthDayStarts } from './calendarDates'
+import { RangeCalendar } from './RangeCalendar'
 import { renderSimpleMarkdown } from './simpleMarkdown'
 import {
-  currentMonthKey,
   inclusiveDayCount,
   monthKeyFromDateKey,
+  nextRangeSelection,
   previousThursdayThroughToday,
   tzOffsetMinutesForLocalDateKey,
-  tzOffsetMinutesForLocalMonthKey,
 } from './therapyDates'
 
 type PreviewMeta = {
@@ -173,8 +173,7 @@ export function TherapyAnalysisPage(props: TherapyAnalysisPageProps) {
     let cancelled = false
     void (async () => {
       try {
-        const tz = String(tzOffsetMinutesForLocalMonthKey(month))
-        const params = new URLSearchParams({ month, tz_offset_min: tz })
+        const params = new URLSearchParams({ month, day_starts: localMonthDayStarts(month).join(',') })
         const data = await apiFetch<{
           counts: Record<string, number>
           avg_mood?: Record<string, number | null>

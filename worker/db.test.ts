@@ -98,61 +98,28 @@ describe('db', () => {
     expect(out.get(2)?.processing).toBe(1)
   })
 
-  it('listThoughtCountsByLocalDay binds tzOffsetSeconds and uid/start/end in order when tags are omitted', async () => {
+  it.each([{ tags: undefined }, { tags: ['Foo', 'Bar'] }])('binds day ranges and optional tag filters (%j)', async ({ tags }) => {
     const all = vi.fn(async () => ({ results: [] }))
     const bind = vi.fn(() => ({ all }))
-    const prepare = vi.fn((sql: string) => ({ bind, sql }))
+    const prepare = vi.fn(() => ({ bind }))
 
     const env = {
       DB: { prepare } as unknown as D1Database,
     } as unknown as Env
 
+    const days = [
+      { day: '2026-11-01', start: 100, endExclusive: 90_100 },
+      { day: '2026-11-02', start: 90_100, endExclusive: 176_500 },
+    ]
     await listThoughtCountsByLocalDay(env, {
       uid: 'u1',
-      startCreatedAt: 100,
-      endCreatedAtExclusive: 200,
-      tzOffsetSeconds: 3600,
+      days,
+      tags,
     })
 
     expect(prepare).toHaveBeenCalledTimes(1)
-    const sql = String((prepare.mock.calls[0] ?? [])[0])
-    expect(sql).toContain("date(th.created_at - ?, 'unixepoch') AS day")
-
-    expect(bind).toHaveBeenCalledWith(3600, 'u1', 100, 200)
-    expect(all).toHaveBeenCalledTimes(1)
-  })
-
-  it('listThoughtCountsByLocalDay binds tzOffsetSeconds after tag filters when tags are provided', async () => {
-    const all = vi.fn(async () => ({ results: [] }))
-    const bind = vi.fn(() => ({ all }))
-    const prepare = vi.fn((sql: string) => ({ bind, sql }))
-
-    const env = {
-      DB: { prepare } as unknown as D1Database,
-    } as unknown as Env
-
-    await listThoughtCountsByLocalDay(env, {
-      uid: 'u2',
-      startCreatedAt: 10,
-      endCreatedAtExclusive: 20,
-      tzOffsetSeconds: -1800,
-      tags: ['Foo', 'Bar'],
-    })
-
-    expect(prepare).toHaveBeenCalledTimes(1)
-    const sql = String((prepare.mock.calls[0] ?? [])[0])
-    expect(sql).toContain('WITH filtered AS (')
-    expect(sql).toContain("date(f.created_at - ?, 'unixepoch') AS day")
-
-    // tzOffsetSeconds is bound near the end, after uid/start/end/tags/havingCount.
-    const bindArgs = bind.mock.calls[0] as unknown[]
-    expect(bindArgs[0]).toBe('u2')
-    expect(bindArgs[1]).toBe(10)
-    expect(bindArgs[2]).toBe(20)
-    // Last two arguments are tzOffsetSeconds and uid.
-    expect(bindArgs[bindArgs.length - 2]).toBe(-1800)
-    expect(bindArgs[bindArgs.length - 1]).toBe('u2')
-
+    const tagBindings = tags ? ['u1', ...tags, tags.length] : []
+    expect(bind).toHaveBeenCalledWith(JSON.stringify(days), 'u1', 100, 176_500, ...tagBindings, 'u1')
     expect(all).toHaveBeenCalledTimes(1)
   })
 })

@@ -37,29 +37,23 @@ export function tzOffsetMinutesForLocalDateKey(date: string | null): number {
   return d.getTimezoneOffset()
 }
 
-export function parseLocalMonthKey(month: string | null): { y: number; m: number } | null {
-  if (!month) return null
-  const m = month.match(/^(\d{4})-(\d{2})$/)
-  if (!m) return null
-  const y = Number(m[1])
-  const mm = Number(m[2])
-  if (!Number.isFinite(y) || !Number.isFinite(mm)) return null
-  return { y, m: mm }
-}
-
-export function tzOffsetMinutesForLocalMonthKey(month: string | null): number {
-  const parsed = parseLocalMonthKey(month)
-  if (!parsed) return new Date().getTimezoneOffset()
-  const d = new Date(parsed.y, parsed.m - 1, 1, 0, 0, 0)
-  return d.getTimezoneOffset()
-}
-
-export function currentMonthKey(now: Date = new Date()): string {
-  return `${now.getFullYear()}-${pad2(now.getMonth() + 1)}`
-}
-
 export function monthKeyFromDateKey(date: string): string {
   return date.slice(0, 7)
+}
+
+/** Start a new range or complete the current one, swapping reversed dates. */
+export function nextRangeSelection(
+  prevStart: string | null,
+  prevEnd: string | null,
+  clicked: string,
+): { start: string; end: string | null } {
+  if (!prevStart || prevEnd) {
+    return { start: clicked, end: null }
+  }
+  if (clicked < prevStart) {
+    return { start: clicked, end: prevStart }
+  }
+  return { start: prevStart, end: clicked }
 }
 
 /** Inclusive day count between two YYYY-MM-DD local keys (order-independent). */

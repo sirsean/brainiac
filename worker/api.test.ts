@@ -48,6 +48,8 @@ const dbMocks = vi.hoisted(() => {
     listThoughtsByTagNames: vi.fn<
       (env: Env, opts: { uid: string; tags: string[]; limit: number; cursor?: { createdAt: number; id: number } }) => Promise<unknown[]>
     >(),
+    listThoughtsInCreatedAtRange: vi.fn(),
+    listThoughtCountsByLocalDay: vi.fn(),
 
     // queue-only exports (not used here)
     getAnalysisJobById: vi.fn(),
@@ -303,6 +305,67 @@ describe('Worker API', () => {
 
     const res = await handler.fetch!(new Request('https://example.com/api/thoughts/by-tags?limit=50'), env)
     expect(res.status).toBe(400)
+  })
+
+  it('GET /api/thoughts/by-day uses both local midnights on a 25-hour day', async () => {
+    const env = makeEnv()
+    const start = Date.UTC(2026, 10, 1, 5) / 1000
+    const endExclusive = Date.UTC(2026, 10, 2, 6) / 1000
+    dbMocks.listThoughtsInCreatedAtRange.mockResolvedValue([])
+
+    const res = await handler.fetch!(new Request(
+      `https://example.com/api/thoughts/by-day?date=2026-11-01&day_starts=${start},${endExclusive}`,
+    ), env)
+
+    expect(res.status).toBe(200)
+    expect(dbMocks.listThoughtsInCreatedAtRange).toHaveBeenCalledWith(env, expect.objectContaining({
+      startCreatedAt: start,
+      endCreatedAtExclusive: endExclusive,
+    }))
+  })
+
+  it('GET /api/thoughts/day-counts uses the post-transition boundary for November 11', async () => {
+    const env = makeEnv()
+    const starts = Array.from({ length: 31 }, (_, i) => Date.UTC(2026, 10, i + 1, i === 0 ? 5 : 6) / 1000)
+    dbMocks.listThoughtCountsByLocalDay.mockResolvedValue([{ day: '2026-11-11', count: 1, avg_mood_score: 4 }])
+
+    const res = await handler.fetch!(new Request(
+      `https://example.com/api/thoughts/day-counts?month=2026-11&day_starts=${starts.join(',')}`,
+    ), env)
+
+    expect(res.status).toBe(200)
+    await expect(res.json()).resolves.toEqual({ counts: { '2026-11-11': 1 }, avg_mood: { '2026-11-11': 4 } })
+    const { days } = dbMocks.listThoughtCountsByLocalDay.mock.calls[0][1]
+    expect(days).toHaveLength(30)
+    expect(days[10]).toEqual({
+      day: '2026-11-11',
+      start: Date.UTC(2026, 10, 11, 6) / 1000,
+      endExclusive: Date.UTC(2026, 10, 12, 6) / 1000,
+    })
+  })
+
+  it('GET /api/thoughts/day-counts accepts a legacy fixed offset', async () => {
+    const env = makeEnv()
+    dbMocks.listThoughtCountsByLocalDay.mockResolvedValue([])
+
+    const res = await handler.fetch!(new Request(
+      'https://example.com/api/thoughts/day-counts?month=2026-11&tz_offset_min=360',
+    ), env)
+
+    expect(res.status).toBe(200)
+    const { days } = dbMocks.listThoughtCountsByLocalDay.mock.calls[0][1]
+    expect(days[0].start).toBe(Date.UTC(2026, 10, 1, 6) / 1000)
+    expect(days[29].endExclusive).toBe(Date.UTC(2026, 11, 1, 6) / 1000)
+  })
+
+  it('GET /api/thoughts/day-counts rejects incomplete day boundaries', async () => {
+    const env = makeEnv()
+    const res = await handler.fetch!(new Request(
+      'https://example.com/api/thoughts/day-counts?month=2026-11&day_starts=1793509200,1793599200',
+    ), env)
+
+    expect(res.status).toBe(400)
+    expect(dbMocks.listThoughtCountsByLocalDay).not.toHaveBeenCalled()
   })
 
   it('GET /api/tags returns tag stats and next_cursor', async () => {

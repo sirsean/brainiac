@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { previousThursdayThroughToday, formatLocalDateKey, inclusiveDayCount } from './therapyDates'
-import { nextRangeSelection } from './RangeCalendar'
+import { previousThursdayThroughToday, formatLocalDateKey, inclusiveDayCount, nextRangeSelection } from './therapyDates'
 
 describe('previousThursdayThroughToday', () => {
   it('uses prior Thursday when today is Thursday', () => {

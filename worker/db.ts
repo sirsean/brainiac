@@ -353,74 +353,44 @@ type DayCountRow = { day: string; count: number; avg_mood_score: number | null }
 
 export async function listThoughtCountsByLocalDay(env: Env, opts: {
   uid: string
-  startCreatedAt: number
-  endCreatedAtExclusive: number
-  tzOffsetSeconds: number
+  days: Array<{ day: string; start: number; endExclusive: number }>
   tags?: string[]
 }): Promise<DayCountRow[]> {
-  const { uid, startCreatedAt, endCreatedAtExclusive, tzOffsetSeconds, tags } = opts
-
-  // SQLite date() returns YYYY-MM-DD.
-  if (!tags || tags.length === 0) {
-    const { results } = await env.DB.prepare(
-      `SELECT
-         date(th.created_at - ?, 'unixepoch') AS day,
-         COUNT(*) AS count,
-         AVG(tm.mood_score) AS avg_mood_score
-       FROM thoughts th
-       LEFT JOIN thought_moods tm ON tm.thought_id = th.id AND tm.uid = th.uid
-       WHERE th.uid = ?
-         AND th.deleted_at IS NULL
-         AND th.created_at >= ?
-         AND th.created_at < ?
-       GROUP BY day
-       ORDER BY day ASC`,
-    )
-      .bind(tzOffsetSeconds, uid, startCreatedAt, endCreatedAtExclusive)
-      .all<DayCountRow>()
-
-    return results
-  }
-
-  const tagPlaceholders = tags.map(() => '?').join(',')
-  const havingCount = tags.length
+  const { uid, days, tags = [] } = opts
+  const filterByTags = tags.length > 0
 
   const sql =
-    `WITH filtered AS (
+    `WITH days AS (
+       SELECT json_extract(value, '$.day') AS day,
+              json_extract(value, '$.start') AS start_at,
+              json_extract(value, '$.endExclusive') AS end_at
+       FROM json_each(?)
+     ),
+     filtered AS (
        SELECT th.id AS id, th.created_at AS created_at
        FROM thoughts th
-       JOIN thought_tags tt ON tt.thought_id = th.id
-       JOIN tags tg ON tg.id = tt.tag_id
+       ${filterByTags ? `JOIN thought_tags tt ON tt.thought_id = th.id
+       JOIN tags tg ON tg.id = tt.tag_id` : ''}
        WHERE th.uid = ?
          AND th.deleted_at IS NULL
          AND th.created_at >= ?
          AND th.created_at < ?
-         AND tg.uid = ?
-         AND tg.name IN (${tagPlaceholders})
+       ${filterByTags ? `AND tg.uid = ?
+         AND tg.name IN (${tags.map(() => '?').join(',')})
        GROUP BY th.id
-       HAVING COUNT(DISTINCT tg.name) = ?
+       HAVING COUNT(DISTINCT tg.name) = ?` : ''}
      )
-     SELECT
-       date(f.created_at - ?, 'unixepoch') AS day,
-       COUNT(*) AS count,
-       AVG(tm.mood_score) AS avg_mood_score
-     FROM filtered f
+     SELECT d.day, COUNT(*) AS count, AVG(tm.mood_score) AS avg_mood_score
+     FROM days d
+     JOIN filtered f ON f.created_at >= d.start_at AND f.created_at < d.end_at
      LEFT JOIN thought_moods tm ON tm.thought_id = f.id AND tm.uid = ?
-     GROUP BY day
-     ORDER BY day ASC`
+     GROUP BY d.day
+     ORDER BY d.day ASC`
 
-  const bindings: unknown[] = [
-    uid,
-    startCreatedAt,
-    endCreatedAtExclusive,
-    uid,
-    ...tags,
-    havingCount,
-    tzOffsetSeconds,
-    uid,
-  ]
-
-  const { results } = await env.DB.prepare(sql).bind(...bindings).all<DayCountRow>()
+  const tagBindings = filterByTags ? [uid, ...tags, tags.length] : []
+  const { results } = await env.DB.prepare(sql)
+    .bind(JSON.stringify(days), uid, days[0].start, days[days.length - 1].endExclusive, ...tagBindings, uid)
+    .all<DayCountRow>()
   return results
 }
 
